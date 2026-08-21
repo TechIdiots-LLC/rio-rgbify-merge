@@ -4,7 +4,32 @@
 
 ### ✨ Features and improvements
 
-- _...Add new stuff here..._
+- **The `custom` terrain encoding, where the config supplies the formula.** A
+  source, and the output, can now say how their channels pack a height instead
+  of choosing between `mapbox` and `terrarium`, using the four numbers
+  MapLibre's style-spec defines:
+
+  ```
+  height = r*redFactor + g*greenFactor + b*blueFactor - baseShift
+  ```
+
+  Taken from maplibre-gl-js's own `dem_data.ts`, including the sign — `baseShift`
+  is subtracted, where `base_val` is added, so a mapbox `base_val` of `-10000` is
+  a `baseShift` of `10000`. Packing follows MapLibre's too, scaling by the
+  smallest factor so the least-significant channel is not rounded away before the
+  others have had their share.
+
+  All four numbers are required. Three of four is refused rather than half-read:
+  the tile cannot be decoded either way, and a partial guess produces heights
+  that look plausible and are wrong. A source is checked when it is built, so a
+  run that cannot work fails before it reads a tile rather than at every one.
+
+  Sources may mix encodings freely, with each other and with the output —
+  everything is decoded to metres before it is merged.
+
+  `mapbox` and `terrarium` are unchanged, byte for byte: `custom` is a third
+  branch rather than a rewrite of the two, which the pixel-level reference tiles
+  confirm.
 
 ### 🐞 Bug fixes
 

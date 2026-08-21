@@ -187,7 +187,8 @@ The `merge` command makes use of a json configuration file which should be passe
     *   A list of objects defining the input MBTiles or Raster files.
     *   **MBTiles Sources**:
         *   `path` (Required): The path to the MBTiles file.
-        *   `encoding` (Optional, Default: `"mapbox"`): The encoding used for the MBTiles file (`"mapbox"` or `"terrarium"`).
+        *   `encoding` (Optional, Default: `"mapbox"`): The encoding used for the MBTiles file (`"mapbox"`, `"terrarium"` or `"custom"`).
+        *   `redFactor`, `greenFactor`, `blueFactor`, `baseShift` (Required with `"custom"`): The four numbers that describe how this source packs a height, as MapLibre's style-spec defines them — `height = r*redFactor + g*greenFactor + b*blueFactor - baseShift`. All four are required; three of four is refused, because the tile cannot be decoded either way. `snake_case` spellings are accepted too.
         *   `height_adjustment` (Optional, Default: `0.0`): A floating-point value (in meters) to adjust the elevation of that particular input. Positive values raise the elevation, and negative values lower the elevation.
         *   `base_val` (Optional, Default: `-10000`): A floating-point value which will be the base value for mapbox encoded tiles, in meters.
         *    `interval` (Optional, Default: `0.1`): A floating-point value that represents the vertical distance between each level of encoded height.
@@ -199,7 +200,10 @@ The `merge` command makes use of a json configuration file which should be passe
         *   `interval` (Optional, Default: `0.1`): A floating-point value that represents the vertical distance between each level of encoded height.
         *   `mask_values` (Optional, Default `[0.0]`): A list of numbers representing the elevation values to mask.
 *   `output_path` (Optional, Default: `"output.mbtiles"`): The output path for the merged MBTiles file.
-*   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"` or `"terrarium"`).
+*   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"`, `"terrarium"` or `"custom"`).
+*   `output_redFactor`, `output_greenFactor`, `output_blueFactor`, `output_baseShift` (Required with `output_encoding: "custom"`): The formula to write the merged tiles with. Sources may use different encodings from each other and from the output — everything is decoded to metres before it is merged, so the encodings only have to be readable, not to match.
+
+    **Note the sign.** `baseShift` is *subtracted*, where `base_val` is added: a mapbox source's `base_val` of `-10000` is a `baseShift` of `10000`. The two named encodings are exactly these numbers — mapbox is `(6553.6, 25.6, 0.1, 10000)` and terrarium is `(256, 1, 0.00390625, 32768)` — so `"custom"` with those values behaves identically to naming them.
 *   `output_nodata` (Optional, Default: `None`): The value to use for output nodata replacement.  If set, `NaN` values will be replaced with this value. If `None`, no nodata replacement is performed.
 *   `output_format` (Optional, Default: `"png"`): The output image format (`"png"` or `"webp"`).
 *   `resampling` (Optional, Default: `"bilinear"`): The method to use for resampling (`"nearest"`, `"bilinear"`, `"cubic"`, `"cubic_spline"`, `"lanczos"`, `"average"`, `"mode"`, or `"gauss"`).

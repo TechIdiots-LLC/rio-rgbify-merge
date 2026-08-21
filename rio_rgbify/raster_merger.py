@@ -45,6 +45,10 @@ def retry(attempts, base_delay=1, max_delay=10):
 class EncodingType(Enum):
     MAPBOX = "mapbox"
     TERRARIUM = "terrarium"
+    # The formula comes from the config rather than from the name. Same four
+    # numbers MapLibre's style-spec uses:
+    #   height = r*redFactor + g*greenFactor + b*blueFactor - baseShift
+    CUSTOM = "custom"
 
 @dataclass
 class RasterSource:

@@ -46,6 +46,10 @@ def retry(attempts, base_delay=1, max_delay=10):
 class EncodingType(Enum):
     MAPBOX = "mapbox"
     TERRARIUM = "terrarium"
+    # The formula comes from the config rather than from the name. Same four
+    # numbers MapLibre's style-spec uses:
+    #   height = r*redFactor + g*greenFactor + b*blueFactor - baseShift
+    CUSTOM = "custom"
 
 @dataclass
 class MBTilesSource:
@@ -56,10 +60,16 @@ class MBTilesSource:
     base_val: float = -10000 # Add base val, with default of -10000 for mapbox
     interval: float = 0.1 # Add interval with default of 0.1 for mapbox
     mask_values: list = field(default_factory=lambda: [0.0])
+    # Only read when encoding is CUSTOM, and then all four are required.
+    encoding_factors: dict = None
 
     def __post_init__(self):
         if not self.path.exists():
             raise ValueError(f"Source file does not exist: {self.path}")
+        if self.encoding == EncodingType.CUSTOM:
+            # Checked here rather than at the first tile: a run that is going
+            # to fail on every tile should fail before it reads any of them.
+            ImageEncoder._custom_factors_or_raise(self.encoding_factors)
 
 
 @dataclass
@@ -78,7 +88,7 @@ class TerrainRGBMerger:
                  resampling=Resampling.lanczos, sparse_tiles=False, processes=None, default_tile_size=512,
                  output_image_format=ImageFormat.PNG,
                  min_zoom=0, max_zoom=None, bounds=None, gaussian_blur_sigma=0.2,
-                 bounds_source=None):
+                 bounds_source=None, output_encoding_factors=None):
         self.sources = sources
         self.output_path = Path(output_path)
         self.output_encoding = output_encoding
@@ -95,6 +105,8 @@ class TerrainRGBMerger:
         self.write_queue = Queue()
         self.gaussian_blur_sigma = gaussian_blur_sigma
         self.bounds_source = bounds_source
+        # Only meaningful when output_encoding is CUSTOM.
+        self.output_encoding_factors = output_encoding_factors
 
         """
         Initializes the TerrainRGBMerger.
@@ -168,7 +180,7 @@ class TerrainRGBMerger:
                     self.logger.error(f"Unexpected RGB shape in tile {tile.z}/{tile.x}/{tile.y}: {rgb.shape}")
                     return None, {}
 
-                elevation = ImageEncoder._decode(rgb, source.base_val, source.interval, encoding.value) # Use the static decode method from the encoder
+                elevation = ImageEncoder._decode(rgb, source.base_val, source.interval, encoding.value, source.encoding_factors) # Use the static decode method from the encoder
                 elevation = ImageEncoder._mask_elevation(elevation, source.mask_values)
 
                 #Apply height adjustment
@@ -393,7 +405,8 @@ class TerrainRGBMerger:
                 merged_elevation,
                 self.output_encoding,
                 0.1,
-                base_val=-10000
+                base_val=-10000,
+                factors=self.output_encoding_factors
             )
             image_bytes = ImageEncoder.save_rgb_to_bytes(rgb_data, self.output_image_format, self.default_tile_size)
             

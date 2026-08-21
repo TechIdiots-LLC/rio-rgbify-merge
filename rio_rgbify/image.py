@@ -6,6 +6,33 @@ from rasterio._io import virtual_file_to_buffer
 from enum import Enum
 import logging
 
+def _custom_factors(factors):
+    """Read the four numbers a custom encoding is unreadable without.
+
+    All or nothing: three of four is no better than none, since the tile
+    cannot be decoded either way, and a partial guess would produce heights
+    that look plausible and are wrong.
+    """
+    if not factors:
+        raise ValueError(
+            "encoding 'custom' needs redFactor, greenFactor, blueFactor and baseShift"
+        )
+    try:
+        values = (
+            float(factors["redFactor"]),
+            float(factors["greenFactor"]),
+            float(factors["blueFactor"]),
+            float(factors["baseShift"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(
+            "encoding 'custom' needs redFactor, greenFactor, blueFactor and baseShift"
+        ) from error
+    if any(v == 0 for v in values[:3]):
+        raise ValueError("custom channel factors must not be zero")
+    return values
+
+
 class ImageFormat(Enum):
     PNG = "png"
     WEBP = "webp"
@@ -13,7 +40,7 @@ class ImageFormat(Enum):
 class ImageEncoder:
 
     @staticmethod
-    def data_to_rgb(data, encoding, interval, base_val=-10000, round_digits=0):
+    def data_to_rgb(data, encoding, interval, base_val=-10000, round_digits=0, factors=None):
         """
         Given an arbitrary (rows x cols) ndarray,
         encode the data into uint8 RGB from an arbitrary
@@ -42,6 +69,20 @@ class ImageEncoder:
             raise ValueError("Input data must be a numpy array")
 
         data = data.astype(np.float64)
+        if(encoding == "custom"):
+            # MapLibre's own packing: scale by the smallest factor so the
+            # least-significant channel is not rounded away before the others
+            # have had their share.
+            red, green, blue, shift = _custom_factors(factors)
+            min_scale = min(red, green, blue)
+            ceiling = round((256 * 256 * 256 - 1) * (blue / min_scale))
+            scaled = np.clip(np.round((data + shift) / min_scale), 0, ceiling)
+            rows, cols = data.shape
+            rgb = np.zeros((3, rows, cols), dtype=np.uint8)
+            rgb[0] = np.floor(scaled * min_scale / red) % 256
+            rgb[1] = np.floor(scaled * min_scale / green) % 256
+            rgb[2] = np.floor(scaled * min_scale / blue) % 256
+            return rgb
         if(encoding == "terrarium"):
             data = np.clip(data, -32768, 32767)
             data += 32768
@@ -66,7 +107,12 @@ class ImageEncoder:
         return rgb
     
     @staticmethod
-    def _decode(data: np.ndarray, base: float, interval: float, encoding: str) -> np.ndarray:
+    def _custom_factors_or_raise(factors):
+        """Raise unless the four custom-encoding numbers are all present."""
+        return _custom_factors(factors)
+
+    @staticmethod
+    def _decode(data: np.ndarray, base: float, interval: float, encoding: str, factors: dict = None) -> np.ndarray:
         """
         Utility to decode RGB encoded data
 
@@ -87,6 +133,12 @@ class ImageEncoder:
             Decoded elevation data
         """
         data = data.astype(np.float64)
+        if(encoding == "custom"):
+            # MapLibre's style-spec formula, with the factors supplied rather
+            # than assumed. baseShift is subtracted, which is the opposite sign
+            # to a mapbox base_val: -10000 there is a base_shift of 10000 here.
+            red, green, blue, shift = _custom_factors(factors)
+            return (data[0] * red + data[1] * green + data[2] * blue) - shift
         if(encoding == "terrarium"):
             return (data[0] * 256 + data[1] + data[2] / 256) - 32768
         else:

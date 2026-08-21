@@ -2,6 +2,7 @@ import click
 import logging
 from pathlib import Path
 import json
+import re
 from rio_rgbify.mbtiler import RGBTiler
 from rio_rgbify.merger import TerrainRGBMerger, MBTilesSource, EncodingType
 from rio_rgbify.raster_merger import RasterRGBMerger, RasterSource
@@ -151,6 +152,25 @@ def rgbify(
         tiler.run(workers, batch_size = batch_size, verbose = verbose)
 
 
+def _encoding_factors(source, prefix=""):
+    """The four numbers a custom encoding needs, or None.
+
+    Accepts both spellings -- redFactor as MapLibre writes it, and red_factor
+    as the rest of this config does -- because a person copying the numbers out
+    of a style should not have to rename them on the way in.
+    """
+    names = ("redFactor", "greenFactor", "blueFactor", "baseShift")
+    found = {}
+    for name in names:
+        snake = prefix + re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+        camel = prefix + name if prefix else name
+        for key in (camel, snake, name):
+            if key in source:
+                found[name] = source[key]
+                break
+    return found or None
+
+
 @main_group.command('merge', short_help='Merge multiple MBTiles or Raster files.')
 @click.option(
     "--config", "-c", type=click.Path(exists=True),
@@ -188,7 +208,11 @@ def merge(config, workers, verbose):
                         height_adjustment=source.get("height_adjustment", 0.0),
                         base_val=source.get("base_val", -10000),
                         interval=source.get("interval", 0.1),
-                        mask_values=source.get("mask_values", [0.0])
+                        mask_values=source.get("mask_values", [0.0]),
+                        # Only read for encoding "custom", and then all four
+                        # are required -- checked when the source is built so a
+                        # run that cannot work fails before reading a tile.
+                        encoding_factors=_encoding_factors(source)
                     )
                 )
             elif source_type.lower() == 'raster':
@@ -217,6 +241,7 @@ def merge(config, workers, verbose):
                 gaussian_blur_sigma=config.get("gaussian_blur_sigma", 0.2),
                 processes=workers,
                 bounds_source = config.get("bounds_source", None),
+                output_encoding_factors=_encoding_factors(config, prefix="output_"),
             )
         elif output_type.lower() == 'raster':
             merger = RasterRGBMerger(
