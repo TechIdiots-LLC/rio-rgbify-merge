@@ -1,0 +1,8 @@
+include README.md
+include CHANGELOG.md
+include LICENSE
+include requirements.txt
+include merge_example.json
+recursive-exclude test *
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]

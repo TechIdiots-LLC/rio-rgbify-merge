@@ -1,6 +1,7 @@
 click
 rasterio~=1.0
+numpy
 Pillow
-rio-mucho>=0.2.1
 mercantile
 scipy
+psutil
