@@ -188,18 +188,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Publishing with an API token, which needs PYPI_API_TOKEN in the
-      # "release" environment.
+      # Trusted Publishing: no stored token. PyPI verifies this workflow's OIDC
+      # identity against a publisher configured at
+      # https://pypi.org/manage/account/publishing/ -- which must name this
+      # repository, `release.yml`, and the `release` environment set on this
+      # job. All three have to match or the upload is rejected.
       #
-      # To switch to Trusted Publishing instead -- no stored secret, PyPI
-      # verifies the workflow identity directly -- add a publisher for this
-      # repository and workflow at https://pypi.org/manage/account/publishing/
-      # and delete the `password:` line below. `id-token: write` is already
-      # granted above.
+      # For a project that does not exist on PyPI yet, add it as a *pending*
+      # publisher; the project is created by the first successful upload.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
           # A re-run after a partial failure should not fall over on the file
           # that already landed.
           skip-existing: true

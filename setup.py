@@ -39,6 +39,13 @@ extra_reqs = {
     ],
 }
 
+# The distribution name is not "rio-rgbify": that belongs to mapbox on PyPI,
+# last published in 2022. PyPI project names are one flat global namespace --
+# an organisation account owns projects but does not scope their names, so
+# there is no techidiots-llc/rio-rgbify to publish under.
+#
+# The import name is unaffected. This installs as rio-rgbify-terrain and is
+# still `import rio_rgbify`, still registering `rio rgbify` and `rio merge`.
 setup(name="rio-rgbify-terrain",
       version=version,
       description=u"Encode rasters as Terrain RGB, and merge several terrain sources into one tileset",
