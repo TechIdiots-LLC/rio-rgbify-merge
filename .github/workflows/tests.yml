@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
     branches: ["**"]
+  # Called by release.yml, so a release runs the same matrix rather than a
+  # second copy of it that can drift.
+  workflow_call:
 
 jobs:
   test:

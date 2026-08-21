@@ -2,12 +2,23 @@
 
 > **Fork:** This is a fork of [mapbox/rio-rgbify](https://github.com/mapbox/rio-rgbify), maintained by TechIdiots LLC under the same MIT License.
 
-Encode arbitrary bit depth rasters in pseudo base-256 as RGB
+Encode arbitrary bit depth rasters in pseudo base-256 as RGB, and merge several
+terrain sources into a single tileset.
 
 ## Installation
 
 ```
-git clone https://github.com/acalcutt/rio-rgbify.git
+pip install rio-rgbify-merge
+```
+
+The distribution is called `rio-rgbify-merge` because `rio-rgbify` on PyPI is
+the upstream package, which this fork does not replace. The import name and the
+commands are unchanged: `import rio_rgbify`, `rio rgbify` and `rio merge`.
+
+To work on it instead:
+
+```
+git clone https://github.com/TechIdiots-LLC/rio-rgbify-merge.git
 
 cd rio-rgbify
 
