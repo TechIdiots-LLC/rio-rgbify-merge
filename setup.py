@@ -67,7 +67,7 @@ setup(name="rio-rgbify-merge",
       maintainer=u"TechIdiots-LLC",
       url="https://github.com/TechIdiots-LLC/rio-rgbify-merge",
       project_urls={
-          "Changelog": "https://github.com/TechIdiots-LLC/rio-rgbify-merge/blob/master/CHANGELOG.md",
+          "Changelog": "https://github.com/TechIdiots-LLC/rio-rgbify-merge/blob/main/CHANGELOG.md",
           "Source": "https://github.com/TechIdiots-LLC/rio-rgbify-merge",
           "Upstream": "https://github.com/mapbox/rio-rgbify",
       },

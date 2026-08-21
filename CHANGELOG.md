@@ -1,6 +1,6 @@
 # rio-rgbify changelog
 
-## master
+## main
 
 ### ✨ Features and improvements
 

@@ -142,7 +142,8 @@ class TestLayerPriority:
 
     "The merge logic works by merging the input sources in order ... The last
     input source will be the base layer for tiles", and bounds_source defaults
-    to the last source too.  master inverts this; see the note in the commit.
+    to the last source too.  28838d3 inverted it while making a newly written
+    CI test pass; these pin it so that cannot happen quietly again.
     """
 
     def test_last_source_paints_over_the_first(self, tmp_path):

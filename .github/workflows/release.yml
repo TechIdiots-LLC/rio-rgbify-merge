@@ -3,7 +3,7 @@ name: Build and Release
 on:
   workflow_dispatch:
   push:
-    branches: [master]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -36,7 +36,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
 
-          # Every push to master runs this workflow, and most pushes are not
+          # Every push to main runs this workflow, and most pushes are not
           # releases. The version having already been released is what tells
           # them apart -- so a normal commit finds its tag present and stops
           # here, and the one commit that merged a bump PR does not.

@@ -157,9 +157,9 @@ jobs:
           changelog = re.sub(r'^## (?:master|main)\s*$', f'## {new_version}', changelog, flags=re.MULTILINE)
           changelog = changelog.replace('- _...Add new stuff here..._\n', '')
 
-          # Prepend fresh master section
-          master_section = '\n'.join([
-              '## master',
+          # Prepend fresh main section
+          main_section = '\n'.join([
+              '## main',
               '### ✨ Features and improvements',
               '- _...Add new stuff here..._',
               '',
@@ -190,7 +190,7 @@ jobs:
               else:
                   rest = rest + '\n' + '\n'.join(missing_entries) + '\n'
 
-          changelog = title + master_section + rest
+          changelog = title + main_section + rest
           open(changelog_path, 'w').write(changelog)
           print("Updated CHANGELOG.md")
 
@@ -220,5 +220,5 @@ jobs:
           body: |
             Automated version bump to `v${{ steps.version-details.outputs.version }}`.
 
-            Review the `CHANGELOG.md` entries before merging. Merging this to `master` triggers the **Build and Release** workflow, which publishes the GitHub release and pushes the package to PyPI.
+            Review the `CHANGELOG.md` entries before merging. Merging this to `main` triggers the **Build and Release** workflow, which publishes the GitHub release and pushes the package to PyPI.
           labels: release
