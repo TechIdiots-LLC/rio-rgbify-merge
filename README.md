@@ -18,7 +18,7 @@ commands are unchanged: `import rio_rgbify`, `rio rgbify` and `rio merge`.
 To work on it instead:
 
 ```
-git clone https://github.com/TechIdiots-LLC/rio-rgbify.git
+git clone https://github.com/TechIdiots-LLC/rio-rgbify-merge.git
 
 cd rio-rgbify
 
