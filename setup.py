@@ -44,9 +44,9 @@ extra_reqs = {
 # an organisation account owns projects but does not scope their names, so
 # there is no techidiots-llc/rio-rgbify to publish under.
 #
-# The import name is unaffected. This installs as rio-rgbify-terrain and is
+# The import name is unaffected. This installs as rio-rgbify-merge and is
 # still `import rio_rgbify`, still registering `rio rgbify` and `rio merge`.
-setup(name="rio-rgbify-terrain",
+setup(name="rio-rgbify-merge",
       version=version,
       description=u"Encode rasters as Terrain RGB, and merge several terrain sources into one tileset",
       long_description=long_description,
