@@ -18,6 +18,7 @@ from rio_rgbify.database import MBTilesDatabase
 from rio_rgbify.image import ImageFormat, ImageEncoder
 from queue import Queue
 import functools
+from rio_rgbify.cutline import feather_for, load_cutline
 from rio_rgbify.smoothing import blur_margin, crop_margin, grow_bounds, smooth
 import time
 import multiprocessing #Import the multiprocessing library
@@ -65,6 +66,14 @@ class MBTilesSource:
     # so in the bytes, and the height that pixel decodes to is one real ground
     # elsewhere may also be at.
     mask_colors: list = field(default_factory=list)
+    # A GeoJSON file, or four numbers, limiting where this source contributes.
+    # The path travels rather than the geometry: a national boundary is
+    # megabytes of coordinates and the source config is pickled to a worker for
+    # every tile, so it is loaded once per process and cached by path.
+    cutline: str = None
+    bounds: list = None
+    # Pixels to fade in over at that edge. 0 makes the edge a switch.
+    feather: int = 0
     # Only read when encoding is CUSTOM, and then all four are required.
     encoding_factors: dict = None
 
@@ -304,16 +313,24 @@ class TerrainRGBMerger:
             if tile_data is not None:
                 resampled_data = self._resample_if_needed(tile_data, target_tile, target_transform, tile_size)
 
+                weight = self._clip_weights(i, target_tile, tile_size)
+
                 # height_adjustment is already applied in _decode_tile, before
                 # masking, which is the only place it can go: mask_values are
                 # compared against raw decoded heights, so shifting first would
                 # stop them matching. Applying it again here doubled it.
                 if result is None:
                     result = resampled_data
-                else:
+                    # Nothing underneath to blend with, so a weight can only
+                    # say whether this pixel is there at all.
+                    if weight is not None:
+                        result = np.where(weight > 0, result, np.nan)
+                elif weight is None:
                     mask = ~np.isnan(resampled_data)
                     if np.any(mask):
                         result[mask] = resampled_data[mask]
+                else:
+                    result = self._blend(result, resampled_data, weight)
 
         # Nothing survived the merge, so there is no tile worth writing.
         #
@@ -332,6 +349,71 @@ class TerrainRGBMerger:
             result[np.isnan(result)] = self.output_nodata
 
         return result
+
+    def _clip_weights(self, index: int, target_tile: mercantile.Tile, tile_size: int):
+        """
+        How much of a source counts, per pixel, for the tile being built.
+
+        Parameters
+        ----------
+        index: int
+            Which source. tile_datas is built in self.sources order.
+        target_tile: mercantile.Tile
+            The tile being built.
+        tile_size: int
+            Pixels per side.
+
+        Returns
+        -------
+        np.ndarray or None
+            Weights in 0..1, or None where the source is not clipped at all --
+            which is the common case and worth not allocating for.
+        """
+        if index >= len(self.sources):
+            return None
+        source = self.sources[index]
+        cutline = load_cutline(
+            getattr(source, "cutline", None), getattr(source, "bounds", None)
+        )
+        if cutline is None:
+            return None
+        return cutline.weights(
+            target_tile, tile_size, feather_for(getattr(source, "feather", 0))
+        )
+
+    @staticmethod
+    def _blend(under: np.ndarray, over: np.ndarray, weight: np.ndarray) -> np.ndarray:
+        """
+        Mix a clipped source into what is already there.
+
+        A weight of 1 takes the pixel outright, as an unclipped source does; 0
+        leaves what is underneath; between them the two are mixed. Only where
+        there is something underneath to mix with -- a partly-weighted source
+        over a hole stands alone, because fading into nothing would erode it by
+        the width of its own feather exactly where it is the only thing
+        covering that ground.
+
+        Parameters
+        ----------
+        under: np.ndarray
+            What the merge has so far.
+        over: np.ndarray
+            This source's heights, NaN where it has none.
+        weight: np.ndarray
+            0 to 1, per pixel.
+
+        Returns
+        -------
+        np.ndarray
+            The merged heights.
+        """
+        share = np.where(np.isnan(over), 0.0, weight)
+        alone = np.isnan(under) | (share >= 1.0)
+        with np.errstate(invalid="ignore"):
+            mixed = under * (1.0 - share) + over * share
+        return np.where(
+            share <= 0.0, under, np.where(alone, over, mixed)
+        )
 
     def _resample_if_needed(self, tile_data: TileData, target_tile: mercantile.Tile, target_transform, tile_size) -> np.ndarray:
         """Resample tile data if source zoom differs from target"""

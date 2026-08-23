@@ -4,6 +4,50 @@
 
 ### ✨ Features and improvements
 
+- **`cutline`, `bounds` and `feather`: clip a source to a shape, and fade it in
+  at the edge of one.** The merge took the upper source outright wherever it
+  had data, so where a high-resolution local DEM stopped, the next pixel was a
+  different survey on a different vertical datum. Under a hillshade that is a
+  wall.
+
+  ```json
+  {
+    "path": "swissalti.mbtiles",
+    "cutline": "switzerland.geojson",
+    "feather": 16
+  }
+  ```
+
+  The step left is the height difference divided by the feather, which makes
+  the number predictable from what it has to hide: 40 m faded over 16 pixels
+  steps 2.5 m a pixel rather than 40 m at once. It covers a vertical datum
+  disagreement too, which is the same wall by another cause and otherwise wants
+  a hand-tuned `height_adjustment`.
+
+  `bounds` is `[west, south, east, north]` and is built as a four-cornered
+  cutline rather than handled separately, so one cannot disagree with the other
+  about what an edge is. `feather` is capped at 64 pixels — past that the ramp
+  never reaches full weight inside a 256px tile, and the source is being turned
+  down rather than blended in.
+
+  Two rules that are not obvious and are what the tests hold. The ramp runs
+  inward only, because a cutline says where a source's data is good and
+  spreading it outward would answer for ground the config just excluded. And a
+  feathered source over ground nothing else covers stands at full weight, or it
+  would erode itself by the width of its own feather exactly where it is the
+  only thing there.
+
+  The distance is exact Euclidean, via `scipy.ndimage.distance_transform_edt`,
+  so a diagonal boundary ramps at the same rate as a straight one. The geometry
+  is loaded once per process and cached by path — the source config is pickled
+  to a worker for every tile, so the path travels and the coordinates do not.
+
+  A tile outside the cutline's extent is rejected on the bounding box without
+  rasterising anything. Inside it, a 20,000-vertex boundary costs about 12 ms
+  per 256px tile and 29 ms per 512px one; the obvious next step is indexing the
+  segments so a tile no edge crosses can be settled with one point-in-polygon
+  test, as it is nowhere near the boundary.
+
 - **`mask_colors`, which masks by the pixel a source stored rather than by the
   height it decodes to.** `mask_values` can only say "every pixel at this
   height", and a source marking its nodata with #000000 usually decodes that to
