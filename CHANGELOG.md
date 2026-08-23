@@ -4,6 +4,16 @@
 
 ### ✨ Features and improvements
 
+- _...Add new stuff here..._
+
+### 🐞 Bug fixes
+
+- _...Add new stuff here..._
+
+## 0.6.0
+
+### ✨ Features and improvements
+
 - **`cutline`, `bounds` and `feather`: clip a source to a shape, and fade it in
   at the edge of one.** The merge took the upper source outright wherever it
   had data, so where a high-resolution local DEM stopped, the next pixel was a
@@ -126,7 +136,6 @@
 
   The border is capped at a quarter of the tile, which is what leaves a residue
   at the deepest upscales — there the kernel is wider than the cap allows.
-
 
 ## 0.5.0
 
