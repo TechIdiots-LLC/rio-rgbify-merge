@@ -526,3 +526,90 @@ def test_mbtiler_baseval_cli():
         ],
     )
     assert result.exit_code == 0
+
+
+class _Capture:
+    """Stands in for a merger, so the sources the config built can be read."""
+
+    built = []
+
+    def __init__(self, sources, **kwargs):
+        _Capture.built = sources
+
+    def process_all(self, **kwargs):
+        pass
+
+
+def test_merge_config_carries_the_masking_and_fading_fields(monkeypatch):
+    # Every config key is read with .get(), so one spelled differently here
+    # than in the file is a setting that silently does nothing -- and the
+    # command logs what it would otherwise raise, so nothing fails loudly
+    # either.
+    monkeypatch.setattr("rio_rgbify.scripts.cli.TerrainRGBMerger", _Capture)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        config_data = {
+            "sources": [
+                {
+                    "path": "test1.mbtiles",
+                    "mask_range": [-1, 0],
+                    "feather_metres": 50,
+                    "bounds": [-10, 50, 10, 60],
+                },
+                {
+                    "path": "test2.mbtiles",
+                    "mask_range": [[-1, 0], [100, 200]],
+                    "feather_meters": 25,
+                    "bounds": [-10, 50, 10, 60],
+                },
+            ],
+            "output_path": "merged.mbtiles",
+        }
+        with open("config.json", "w") as f:
+            json.dump(config_data, f)
+        for name in ("test1.mbtiles", "test2.mbtiles"):
+            with MBTilesDatabase(name) as _:
+                pass
+
+        result = runner.invoke(
+            cli, ["merge", "--config", "config.json", "-j", "1"]
+        )
+        assert result.exit_code == 0
+
+    first, second = _Capture.built
+    assert first.mask_range == [-1, 0]
+    assert first.feather_metres == 50
+    assert second.mask_range == [[-1, 0], [100, 200]]
+    assert second.feather_metres == 25, "the other spelling is read as well"
+
+
+def test_a_raster_source_is_built_at_all(monkeypatch):
+    # base_val and interval are the output encoding's and belong to the
+    # merger. Passed to the source they raised a TypeError the command logged
+    # and swallowed, so a raster source never built and the run merged
+    # nothing at all.
+    monkeypatch.setattr("rio_rgbify.scripts.cli.RasterRGBMerger", _Capture)
+    _Capture.built = []
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        config_data = {
+            "output_type": "raster",
+            "sources": [
+                {
+                    "path": in_elev_src,
+                    "source_type": "raster",
+                    "mask_range": [-1, 0],
+                }
+            ],
+            "output_path": "merged.tif",
+        }
+        with open("config.json", "w") as f:
+            json.dump(config_data, f)
+
+        result = runner.invoke(
+            cli, ["merge", "--config", "config.json", "-j", "1"]
+        )
+        assert result.exit_code == 0
+
+    assert len(_Capture.built) == 1, "the source never built"
+    assert _Capture.built[0].mask_range == [-1, 0]

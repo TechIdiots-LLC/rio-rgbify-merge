@@ -210,9 +210,16 @@ def merge(config, workers, verbose):
                         interval=source.get("interval", 0.1),
                         mask_values=source.get("mask_values", [0.0]),
                         mask_colors=source.get("mask_colors", []),
+                        mask_range=source.get("mask_range", []),
                         cutline=source.get("cutline"),
                         bounds=source.get("bounds"),
                         feather=source.get("feather", 0),
+                        # Both spellings, because a key read with .get() that
+                        # nobody spells the way this file does is a setting
+                        # that silently does nothing.
+                        feather_metres=source.get(
+                            "feather_metres", source.get("feather_meters", 0)
+                        ),
                         # Only read for encoding "custom", and then all four
                         # are required -- checked when the source is built so a
                         # run that cannot work fails before reading a tile.
@@ -221,12 +228,15 @@ def merge(config, workers, verbose):
                 )
             elif source_type.lower() == 'raster':
                 sources.append(
+                    # base_val and interval are the output encoding's and
+                    # belong to the merger, which has them. Passed here they
+                    # raised a TypeError the command logged and swallowed, so
+                    # a raster source never built at all.
                     RasterSource(
                         path=Path(source["path"]),
                         height_adjustment=source.get("height_adjustment", 0.0),
-                        base_val=source.get("base_val", -10000),
-                        interval=source.get("interval", 0.1),
-                        mask_values=source.get("mask_values", [0.0])
+                        mask_values=source.get("mask_values", [0.0]),
+                        mask_range=source.get("mask_range", [])
                     )
                 )
 

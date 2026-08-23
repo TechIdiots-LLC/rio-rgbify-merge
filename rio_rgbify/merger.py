@@ -18,7 +18,7 @@ from rio_rgbify.database import MBTilesDatabase
 from rio_rgbify.image import ImageFormat, ImageEncoder
 from queue import Queue
 import functools
-from rio_rgbify.cutline import feather_for, load_cutline
+from rio_rgbify.cutline import feather_pixels, load_cutline
 from rio_rgbify.smoothing import blur_margin, crop_margin, grow_bounds, smooth
 import time
 import multiprocessing #Import the multiprocessing library
@@ -61,6 +61,11 @@ class MBTilesSource:
     base_val: float = -10000 # Add base val, with default of -10000 for mapbox
     interval: float = 0.1 # Add interval with default of 0.1 for mapbox
     mask_values: list = field(default_factory=lambda: [0.0])
+    # A band of heights meaning no data, as [low, high] or a list of those.
+    # Nodata is rarely one number once an archive has been resampled: a sea
+    # authored as 0 arrives spread over -0.9 m to 0, and masking the two ends
+    # of that leaves everything between standing proud of what is underneath.
+    mask_range: list = field(default_factory=list)
     # Colours meaning no data, as "#rrggbb" or [r, g, b]. Exact where a height
     # mask has to guess: a source marking nodata with a particular pixel says
     # so in the bytes, and the height that pixel decodes to is one real ground
@@ -74,6 +79,10 @@ class MBTilesSource:
     bounds: list = None
     # Pixels to fade in over at that edge. 0 makes the edge a switch.
     feather: int = 0
+    # The same fade as metres of ground, converted per tile. A hillshade reads
+    # slope, so a fade in pixels is a different slope at every zoom and one
+    # number cannot suit them all. Wins over `feather` where both are set.
+    feather_metres: float = 0
     # Only read when encoding is CUSTOM, and then all four are required.
     encoding_factors: dict = None
 
@@ -200,6 +209,10 @@ class TerrainRGBMerger:
                 # is: both are compared against what the source stored, and
                 # shifting first would stop them matching.
                 elevation = ImageEncoder._mask_colors(elevation, rgb, source.mask_colors)
+                # A band as well as, not instead of: a source may have a
+                # sentinel it names exactly and a stretch of ground it does not
+                # want either.
+                elevation = ImageEncoder._mask_range(elevation, source.mask_range)
 
                 #Apply height adjustment
                 elevation += source.height_adjustment
@@ -378,7 +391,7 @@ class TerrainRGBMerger:
         if cutline is None:
             return None
         return cutline.weights(
-            target_tile, tile_size, feather_for(getattr(source, "feather", 0))
+            target_tile, tile_size, feather_pixels(source, target_tile, tile_size)
         )
 
     @staticmethod

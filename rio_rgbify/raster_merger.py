@@ -56,6 +56,8 @@ class RasterSource:
     path: Path
     height_adjustment: float = 0.0
     mask_values: list = field(default_factory=lambda: [0.0])
+    # A band of heights meaning no data, as [low, high] or a list of those.
+    mask_range: list = field(default_factory=list)
 
     def __post_init__(self):
         if not self.path.exists():
@@ -153,6 +155,7 @@ class RasterRGBMerger:
                     data = data[0] #Only use the first band
 
                 data = ImageEncoder._mask_elevation(data, source.mask_values)
+                data = ImageEncoder._mask_range(data, getattr(source, "mask_range", None))
                 
                 #Apply height adjustment
                 data += source.height_adjustment

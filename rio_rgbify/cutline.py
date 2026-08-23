@@ -8,9 +8,16 @@ different vertical datum. Under a hillshade that reads as a wall.
 `feather` turns the edge into a ramp. The weight climbs from 0 at the boundary
 to 1 that many pixels inside it, and the merge mixes the two sources across
 that band instead of switching between them. The step left is the height
-difference divided by the feather, which is what makes the number predictable
-from what it has to hide: two sources 40 m apart, faded over 16 pixels, step
-2.5 m a pixel rather than 40 m at once.
+difference divided by the feather: two sources 40 m apart, faded over 16
+pixels, step 2.5 m a pixel rather than 40 m at once.
+
+A smaller step is not the same as an invisible one. A hillshade reads slope
+rather than height, so what decides whether the seam goes is the drop divided
+by the ground underneath it -- and a pixel is a different amount of ground at
+every zoom, which leaves one number too generous at the bottom and saturated at
+the top. `feather_metres` says the distance on the ground instead and the
+pixels are worked out for each tile, which holds one gradient everywhere. The
+README has the numbers.
 
 The ramp runs inward only. A cutline says where a source's data is good, so
 spreading it outward would answer for ground the config just said this source
@@ -18,6 +25,7 @@ does not cover.
 """
 
 import json
+import math
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +43,14 @@ from rio_rgbify.smoothing import crop_margin, grow_bounds
 # one that never reaches full weight anywhere inside it -- the source is then
 # not being blended in, it is being turned down.
 MAX_FEATHER = 64
+
+# Past this a fade in metres is a typo rather than a distance. The pixel cap is
+# what actually bounds the ramp at any one zoom, so this only has to catch a
+# number nobody meant to type.
+MAX_FEATHER_METRES = 100000
+
+# The world across the equator, in metres: what a zoom 0 tile spans.
+EQUATOR = 40075016.686
 
 # Cutlines are loaded once per process and keyed by path. A national boundary
 # is megabytes of coordinates, and the source config is pickled to a worker for
@@ -232,6 +248,47 @@ def load_cutline(path=None, bounds=None):
     return cutline
 
 
+def metres_per_pixel(z, y, size):
+    """
+    How much ground one pixel of a tile covers, at that tile's latitude.
+
+    Web Mercator holds a pixel to a fixed fraction of the world, so the ground
+    under it shrinks toward the poles and halves at every zoom. Taken at the
+    middle of the tile: the scale changes across it, but a tile is a small
+    piece of the world at any zoom where a fade is more than a pixel wide.
+
+    Parameters
+    ----------
+    z: int
+        Zoom.
+    y: int
+        Tile row.
+    size: int
+        Pixels per side of the tile.
+
+    Returns
+    -------
+    float
+        Metres per pixel.
+    """
+    tiles = 2**z
+    middle = (y + 0.5) / tiles
+    latitude = math.atan(math.sinh(math.pi * (1 - 2 * middle)))
+    return EQUATOR * math.cos(latitude) / (tiles * size)
+
+
+def _cap_for(size):
+    """
+    The widest fade a grid of this size will take.
+
+    A quarter of the tile, which is where 64 came from and what it still means
+    on a 512px one: past that the ramp reaches full weight nowhere inside the
+    tile, and the source is being turned down rather than blended in. It binds
+    on a fade in metres, which asks for more pixels at every zoom.
+    """
+    return max(MAX_FEATHER, int(round((size or 0) / 4)))
+
+
 def feather_for(value):
     """
     How far a source fades in, bounded.
@@ -252,3 +309,36 @@ def feather_for(value):
     if asked <= 0:
         return 0
     return min(asked, MAX_FEATHER)
+
+
+def feather_pixels(source, tile=None, size=256):
+    """
+    How far a source fades in, in pixels of the tile being built.
+
+    `feather_metres` wins where it is set, because a distance on the ground and
+    a distance in pixels are two answers to one question and the merge can only
+    act on one. It needs the tile: without one there is no scale to convert
+    against, and a fade guessing a zoom would be a different width from the
+    tiles beside it.
+
+    Parameters
+    ----------
+    source: object
+        A source config, carrying `feather` and `feather_metres`.
+    tile: mercantile.Tile
+        The tile being built.
+    size: int
+        Pixels per side of that tile.
+
+    Returns
+    -------
+    int
+        Pixels, 0 when it does not fade.
+    """
+    metres = float(getattr(source, "feather_metres", 0) or 0)
+    if metres > 0:
+        if tile is None:
+            return 0
+        asked = int(round(metres / metres_per_pixel(tile.z, tile.y, size)))
+        return max(0, min(asked, _cap_for(size)))
+    return feather_for(getattr(source, "feather", 0))

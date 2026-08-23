@@ -4,11 +4,57 @@
 
 ### ✨ Features and improvements
 
-- _...Add new stuff here..._
+- **`mask_range`: mask a band of heights, not a list of exact values.** Nodata
+  is rarely one number by the time it reaches a merge. A source resampled on
+  its way to being built does not hold what it was authored with, so a sea
+  authored as `0` arrives spread over -0.9 m to 0 — and `mask_values` on the
+  two ends of that leaves everything between standing proud of whatever is
+  underneath, which a hillshade picks out as a scatter of bright pixels.
+
+  ```json
+  { "path": "planet.mbtiles", "mask_range": [-1, 0] }
+  ```
+
+  A list of bands works too, and both ends belong to the band. Compared to the
+  thousandth, because a height decoded through float arithmetic is not the
+  value it was authored with — 0 comes back as 1.8e-12, and -0.2 as
+  -0.20000000298 — and a band that excluded its own endpoint would leave the
+  row of pixels at its edge behind, which is the artefact it exists to remove.
+  Raster sources take it as well as tiled ones.
+
+- **`feather_metres`: a fade measured in ground rather than in pixels.** A
+  hillshade reads slope rather than height, so what decides whether a seam
+  disappears is the drop divided by the ground underneath it — and a pixel is a
+  different amount of ground at every zoom. Over a 7 m disagreement at 55°N,
+  `feather: 8` is a gradient of 0.08 at z12 and 1.28 at z16: invisible at one
+  end, and at the other a saturated band wider than the cliff it replaced.
+
+  ```json
+  { "path": "swissalti.mbtiles", "bounds": [5, 45, 11, 48], "feather_metres": 50 }
+  ```
+
+  Fifty metres holds 0.14 at every zoom, which is ordinary hillside. The pixels
+  are worked out for each tile from
+  `40075016.686 × cos(latitude) / 2^zoom / tile_size`. Below the zoom where the
+  fade is under a pixel wide it rounds to nothing, and it is capped at a quarter
+  of the tile — 128 pixels on a 512px grid, which is where the old maximum of 64
+  came from. `feather_meters` is read as well, since every config key is read
+  with `.get()` and one spelled the other way would silently do nothing.
+
+  The fade still applies at a `cutline` or `bounds` edge only. The holes
+  `mask_values`, `mask_range` and `mask_colors` leave are not faded here: that
+  needs the tiles either side of the one being built, so a tile can tell whether
+  a hole continues past its own border, and it is not built.
 
 ### 🐞 Bug fixes
 
-- _...Add new stuff here..._
+- **A raster source never built.** `base_val` and `interval` are the output
+  encoding's and belong to the merger, which has them; the config parser passed
+  them to `RasterSource`, which has neither. That raised a `TypeError` the merge
+  command logged and swallowed, so `source_type: "raster"` produced no sources
+  and merged nothing while reporting success. They are no longer passed, and the
+  README no longer lists them as raster source fields — they were never read
+  there.
 
 ## 0.6.0
 

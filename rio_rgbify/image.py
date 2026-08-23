@@ -249,6 +249,75 @@ class ImageEncoder:
         return np.where(mask, np.nan, elevation)
     
     @staticmethod
+    def _ranges_of(mask_range):
+        """
+        Every band in what the config said, as [low, high] pairs.
+
+        One pair may be written on its own, since a source usually has one
+        stretch of nodata. A list of pairs is the general case.
+
+        Parameters
+        ----------
+        mask_range: list
+            [low, high], or a list of them.
+
+        Returns
+        -------
+        list
+            Pairs, each low first.
+        """
+        if not mask_range:
+            return []
+        pairs = mask_range if isinstance(mask_range[0], (list, tuple)) else [mask_range]
+        bands = []
+        for pair in pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) < 2:
+                continue
+            low, high = float(pair[0]), float(pair[1])
+            bands.append((low, high) if low <= high else (high, low))
+        return bands
+
+    @staticmethod
+    def _mask_range(elevation: np.ndarray, mask_range: list = None) -> np.ndarray:
+        """
+        Mask every height inside a band, rather than a list of exact values.
+
+        Nodata is rarely one number by the time it reaches a merge. A source
+        resampled on its way to being built does not hold what it was authored
+        with: a sea authored as 0 arrives spread across -0.9 m to 0, and
+        masking the two ends of that leaves everything between standing proud
+        of whatever is underneath -- a scatter of single pixels the shading
+        picks out as noise. A band says what was meant, and asymmetrically:
+        sea is everything up to zero and nothing above it.
+
+        Parameters
+        ----------
+        elevation: np.ndarray
+            Decoded heights.
+        mask_range: list
+            [low, high] in metres, or a list of them. Both ends included.
+
+        Returns
+        -------
+        np.ndarray
+            The heights, NaN inside any band.
+        """
+        bands = ImageEncoder._ranges_of(mask_range)
+        if not bands:
+            return elevation
+
+        # Compared in thousandths, so a band includes the number written on it.
+        # A height decoded through float arithmetic is not the value it was
+        # authored with -- 0 comes back as 1.8e-12 and -0.2 as -0.20000000298 --
+        # and an edge that excludes its own endpoint leaves a row of pixels
+        # behind, which is the artefact this exists to remove.
+        scaled = np.rint(elevation * 1000)
+        mask = np.zeros(elevation.shape, dtype=bool)
+        for low, high in bands:
+            mask |= (scaled >= round(low * 1000)) & (scaled <= round(high * 1000))
+        return np.where(mask, np.nan, elevation)
+
+    @staticmethod
     def _range_check(datarange):
         """
         Utility to check if data range is outside of precision for 3 digit base 256
