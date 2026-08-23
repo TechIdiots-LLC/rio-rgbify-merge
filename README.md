@@ -193,6 +193,7 @@ The `merge` command makes use of a json configuration file which should be passe
         *   `base_val` (Optional, Default: `-10000`): A floating-point value which will be the base value for mapbox encoded tiles, in meters.
         *    `interval` (Optional, Default: `0.1`): A floating-point value that represents the vertical distance between each level of encoded height.
         *   `mask_values` (Optional, Default `[0.0]`): A list of numbers representing the elevation values to mask.
+        *   `mask_colors` (Optional, Default `[]`): A list of pixel colours meaning "no data here", as `"#rrggbb"` or `[r, g, b]`. Exact where `mask_values` has to approximate: a source marking its nodata with a particular pixel says so in the bytes, and the height that pixel decodes to is one real ground elsewhere may also be at. Compared before any height adjustment, on the channels as stored.
      *   **Raster Sources**:
         *   `path` (Required): The path to the raster file.
         *   `height_adjustment` (Optional, Default: `0.0`): A floating-point value (in meters) to adjust the elevation of that particular input. Positive values raise the elevation, and negative values lower the elevation.

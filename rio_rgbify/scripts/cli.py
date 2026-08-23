@@ -209,6 +209,7 @@ def merge(config, workers, verbose):
                         base_val=source.get("base_val", -10000),
                         interval=source.get("interval", 0.1),
                         mask_values=source.get("mask_values", [0.0]),
+                        mask_colors=source.get("mask_colors", []),
                         # Only read for encoding "custom", and then all four
                         # are required -- checked when the source is built so a
                         # run that cannot work fails before reading a tile.

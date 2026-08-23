@@ -165,6 +165,88 @@ class ImageEncoder:
         for mask_value in mask_values:
             mask = np.logical_or(mask, elevation == mask_value)
         return np.where(mask, np.nan, elevation)
+
+    @staticmethod
+    def _parse_color(value):
+        """
+        Read one colour from a config into (r, g, b).
+
+        Accepts "#rrggbb", "rrggbb" and [r, g, b], because a colour is the one
+        field somebody will want to paste out of an image editor.
+
+        Parameters
+        ----------
+        value: str or list
+            The colour.
+
+        Returns
+        -------
+        tuple
+            r, g, b.
+
+        Raises
+        ------
+        ValueError
+            When it is not a colour. A mask that silently matches nothing is
+            the failure this feature is most prone to, so it is refused rather
+            than dropped.
+        """
+        if isinstance(value, (list, tuple)):
+            if len(value) < 3:
+                raise ValueError(f"not a colour: {value!r}")
+            channels = tuple(int(c) for c in value[:3])
+        elif isinstance(value, str):
+            text = value.strip().lstrip("#")
+            if len(text) != 6:
+                raise ValueError(f'not a colour: {value!r}, use "#rrggbb"')
+            try:
+                channels = tuple(int(text[i : i + 2], 16) for i in (0, 2, 4))
+            except ValueError:
+                raise ValueError(f'not a colour: {value!r}, use "#rrggbb"') from None
+        else:
+            raise ValueError(f"not a colour: {value!r}")
+
+        if any(c < 0 or c > 255 for c in channels):
+            raise ValueError(f"not a colour: {value!r}, channels are 0-255")
+        return channels
+
+    @staticmethod
+    def _mask_colors(elevation: np.ndarray, rgb: np.ndarray, mask_colors: list = None) -> np.ndarray:
+        """
+        Mask pixels by the colour they were stored as, rather than by height.
+
+        The exact answer to a question `mask_values` can only approximate. A
+        source marks its nodata with a particular pixel -- often #000000, and
+        often a value that decodes to a plausible height -- and masking that
+        height masks real ground everywhere else that happens to be at it. The
+        colour is what the source actually said.
+
+        Compared exactly, on the bytes as stored, before anything has been
+        decoded or adjusted. There is nothing to round.
+
+        Parameters
+        ----------
+        elevation: np.ndarray
+            Decoded heights, shaped (h, w).
+        rgb: np.ndarray
+            The channels it was decoded from, shaped (3, h, w).
+        mask_colors: list
+            Colours meaning no data, as "#rrggbb" or [r, g, b].
+
+        Returns
+        -------
+        np.ndarray
+            The heights, NaN where a colour matched.
+        """
+        if not mask_colors:
+            return elevation
+
+        red, green, blue = rgb[0], rgb[1], rgb[2]
+        mask = np.zeros(elevation.shape, dtype=bool)
+        for colour in mask_colors:
+            r, g, b = ImageEncoder._parse_color(colour)
+            mask |= (red == r) & (green == g) & (blue == b)
+        return np.where(mask, np.nan, elevation)
     
     @staticmethod
     def _range_check(datarange):

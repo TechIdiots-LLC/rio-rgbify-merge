@@ -407,8 +407,9 @@ class RasterRGBMerger:
         tasks = [
             (
                 tile,
-                [(s.path, s.height_adjustment, s.mask_values)
-                 for s in self.sources],
+                # The sources themselves, so a field added to RasterSource
+                # cannot go missing on the way to a worker.
+                list(self.sources),
                 self.output_path,
                 self.output_encoding.value,
                 self.output_nodata,
@@ -443,12 +444,7 @@ def process_tile_task(task_tuple: tuple) -> None:
     sources = []
     try:
         # Reconstruct MBTilesSource objects and create connections
-        for path, height_adj, mask_vals in source_configs:
-            source = RasterSource(
-                path=Path(path),
-                height_adjustment=height_adj,
-                mask_values=mask_vals
-            )
+        for source in source_configs:
             sources.append(source)
 
         # create instance

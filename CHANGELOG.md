@@ -4,6 +4,22 @@
 
 ### ✨ Features and improvements
 
+- **`mask_colors`, which masks by the pixel a source stored rather than by the
+  height it decodes to.** `mask_values` can only say "every pixel at this
+  height", and a source marking its nodata with #000000 usually decodes that to
+  a height real ground elsewhere is also at — so masking it takes out both. A
+  colour is what the source actually said.
+
+  ```json
+  { "path": "swissalti.mbtiles", "mask_colors": ["#000000"] }
+  ```
+
+  Accepts `"#rrggbb"`, `"rrggbb"` and `[r, g, b]`. Compared exactly, on the
+  channels as stored, before any height adjustment — for the same reason
+  `mask_values` is. A colour that cannot be read is refused rather than
+  skipped: a mask that silently matches nothing is the failure this is most
+  prone to.
+
 - **The `custom` terrain encoding, where the config supplies the formula.** A
   source, and the output, can now say how their channels pack a height instead
   of choosing between `mapbox` and `terrarium`, using the four numbers

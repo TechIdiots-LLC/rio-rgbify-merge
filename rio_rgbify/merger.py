@@ -60,6 +60,11 @@ class MBTilesSource:
     base_val: float = -10000 # Add base val, with default of -10000 for mapbox
     interval: float = 0.1 # Add interval with default of 0.1 for mapbox
     mask_values: list = field(default_factory=lambda: [0.0])
+    # Colours meaning no data, as "#rrggbb" or [r, g, b]. Exact where a height
+    # mask has to guess: a source marking nodata with a particular pixel says
+    # so in the bytes, and the height that pixel decodes to is one real ground
+    # elsewhere may also be at.
+    mask_colors: list = field(default_factory=list)
     # Only read when encoding is CUSTOM, and then all four are required.
     encoding_factors: dict = None
 
@@ -182,6 +187,10 @@ class TerrainRGBMerger:
 
                 elevation = ImageEncoder._decode(rgb, source.base_val, source.interval, encoding.value, source.encoding_factors) # Use the static decode method from the encoder
                 elevation = ImageEncoder._mask_elevation(elevation, source.mask_values)
+                # Before the height adjustment, for the same reason mask_values
+                # is: both are compared against what the source stored, and
+                # shifting first would stop them matching.
+                elevation = ImageEncoder._mask_colors(elevation, rgb, source.mask_colors)
 
                 #Apply height adjustment
                 elevation += source.height_adjustment
@@ -454,8 +463,11 @@ class TerrainRGBMerger:
         tasks = [
             (
                 tile,
-                [(s.path, s.encoding.value, s.height_adjustment, s.base_val, s.interval, s.mask_values)
-                 for s in self.sources],
+                # The sources themselves rather than a tuple of their fields.
+                # That tuple had to be kept in step by hand at both ends and
+                # was not: encoding_factors never reached the workers, so a
+                # custom-encoded source failed in every one of them.
+                list(self.sources),
                 self.output_path,
                 self.output_encoding.value,
                 self.output_nodata,
@@ -562,15 +574,7 @@ def process_tile_task(task_tuple: tuple) -> None:
     db = None
     try:
         # Reconstruct MBTilesSource objects and create connections
-        for path, encoding, height_adj, base_val, interval, mask_vals in source_configs:
-            source = MBTilesSource(
-                path=Path(path),
-                encoding=EncodingType(encoding),
-                height_adjustment=height_adj,
-                base_val=base_val,
-                interval=interval,
-                mask_values=mask_vals
-            )
+        for source in source_configs:
             sources.append(source)
             source_conns[source.path] = sqlite3.connect(source.path)
 
