@@ -33,7 +33,40 @@
 
 ### 🐞 Bug fixes
 
-- _...Add new stuff here..._
+- **Smoothing was eating masked ground and drawing a grid at tile boundaries.**
+  Two separate faults in the same few lines, both invisible in the tile you are
+  looking at and both visible in the map.
+
+  `scipy.ndimage.gaussian_filter` makes NaN out of any NaN in the kernel, so one
+  masked pixel took a disc the width of the kernel with it — and `reproject`,
+  never told what nodata was, averaged NaN into its neighbours before that. One
+  masked pixel in a 9×9 array came back as 81. `mask_values` defaults to `[0.0]`
+  and sea level is exactly 0 in most DEMs, so this ate the coastline of every
+  upscaled tile, by more at every zoom since the sigma grows with the distance.
+
+  Both stages now declare NaN as their nodata. The blur is a normalised
+  convolution — values blurred with nodata counted as zero, a mask of what was
+  known blurred the same way, one divided by the other — and the mask is
+  restored afterwards, so nodata neither grows nor shrinks. A blur is meant to
+  change the heights, not the shape of what has them.
+
+  Separately, a tile was filtered on its own, so the two tiles either side of a
+  boundary computed it from different data and stepped apart. The pixels were
+  already in hand: the parent covers this sub-region and everything around it,
+  so the destination window is widened by the blur's own reach and cropped
+  afterwards. Two neighbours out of one parent, `gaussian_blur_sigma` 1.5,
+  stepping beyond what the same two unblurred tiles step:
+
+  | upscale | sigma | border | before   | after    |
+  | ------- | ----- | ------ | -------- | -------- |
+  | 2       | 3     | 12 px  | 202.41 m | −0.64 m  |
+  | 4       | 6     | 24 px  | 228.43 m | 0.35 m   |
+  | 6       | 9     | 36 px  | 58.80 m  | 8.44 m   |
+  | 8       | 12    | 48 px  | 57.39 m  | 21.78 m  |
+
+  The border is capped at a quarter of the tile, which is what leaves a residue
+  at the deepest upscales — there the kernel is wider than the cap allows.
+
 
 ## 0.5.0
 

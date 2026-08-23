@@ -17,7 +17,7 @@ from rio_rgbify.database import MBTilesDatabase
 from rio_rgbify.image import ImageFormat, ImageEncoder
 from queue import Queue
 import functools
-from scipy.ndimage import gaussian_filter # Import gaussian filter
+from rio_rgbify.smoothing import blur_margin, crop_margin, grow_bounds, smooth
 import time
 import multiprocessing #Import the multiprocessing library
 
@@ -253,23 +253,45 @@ class RasterRGBMerger:
             sub_region_east = sub_region_west + sub_region_width
             sub_region_north = sub_region_south + sub_region_height
 
-            sub_region_transform = rasterio.transform.from_bounds(sub_region_west, sub_region_south, sub_region_east, sub_region_north, tile_size, tile_size)
+            # The blur reads a neighbourhood and this reprojects one tile, so
+            # without a border the two tiles either side of a boundary compute
+            # it from different data and step apart -- a faint grid at tile
+            # boundaries under a hillshade. The pixels are already in hand: the
+            # parent tile covers this sub-region and everything around it, so
+            # the destination window is widened by the blur's own reach and the
+            # border is cropped off afterwards.
+            margin = blur_margin(dynamic_sigma, tile_size)
+            side = tile_size + margin * 2
+            grown = grow_bounds(
+                sub_region_west, sub_region_south, sub_region_east, sub_region_north,
+                margin, tile_size,
+            )
+            sub_region_transform = rasterio.transform.from_bounds(*grown, side, side)
             
             with rasterio.io.MemoryFile() as memfile:
                 with memfile.open(**tile_data.meta) as src:
                     
-                    dst_data = np.zeros((1, tile_size, tile_size), dtype=np.float32)
+                    # NaN rather than zeros, and declared as the nodata on
+                    # both sides. Zeros would be read as sea level everywhere
+                    # the border runs off the parent tile, and a resampler not
+                    # told what nodata is averages it into the neighbours --
+                    # which is how a masked coastline grew by the width of the
+                    # kernel at every zoom it was upscaled through.
+                    dst_data = np.full((1, side, side), np.nan, dtype=np.float32)
                     reproject(
                         source=tile_data.data,
                         destination=dst_data,
                         src_transform=tile_data.meta['transform'],
                         src_crs=tile_data.meta['crs'],
+                        src_nodata=np.nan,
                         dst_transform=sub_region_transform,
                         dst_crs=tile_data.meta['crs'],
+                        dst_nodata=np.nan,
                         resampling=self.resampling
                     )
-                    # Apply Gaussian blur to destination data after reprojection
-                    blurred_data = gaussian_filter(dst_data, sigma=dynamic_sigma)
+                    blurred_data = crop_margin(
+                        smooth(dst_data, dynamic_sigma), tile_size, margin
+                    )
 
 
                     if blurred_data.ndim == 3:
