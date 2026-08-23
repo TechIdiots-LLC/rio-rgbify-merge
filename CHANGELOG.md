@@ -4,6 +4,16 @@
 
 ### ✨ Features and improvements
 
+- _...Add new stuff here..._
+
+### 🐞 Bug fixes
+
+- _...Add new stuff here..._
+
+## 0.7.0
+
+### ✨ Features and improvements
+
 - **`mask_range`: mask a band of heights, not a list of exact values.** Nodata
   is rarely one number by the time it reaches a merge. A source resampled on
   its way to being built does not hold what it was authored with, so a sea
