@@ -111,8 +111,6 @@
 
 ### 🐞 Bug fixes
 
-- Write tiles into a PMTiles archive, and read sources out of one ([#2](https://github.com/TechIdiots-LLC/rio-rgbify-merge/pull/2)) (@acalcutt)
-
 - **The zoom range in the PMTiles header now describes the tiles that are
   actually there.** `pmtiles` 3.7.0 takes it from the first and last directory
   entries' tile ids, and the last entry's id is where that entry's *run*
