@@ -1,7 +1,13 @@
 # rio-rgbify changelog
 
 ## main
+### ✨ Features and improvements
+- _...Add new stuff here..._
 
+### 🐞 Bug fixes
+- _...Add new stuff here..._
+
+## 0.8.0
 ### ✨ Features and improvements
 
 - **PMTiles output, and PMTiles as a source.** Name the output `.pmtiles` and
