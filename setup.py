@@ -30,6 +30,9 @@ inst_reqs = [
     "mercantile",
     "scipy",
     "psutil",
+    # PMTiles output and PMTiles sources. Same library our mbutil fork uses,
+    # so an archive written here and one written by mb-util agree.
+    "pmtiles>=3.7",
 ]
 
 extra_reqs = {

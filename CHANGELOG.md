@@ -4,7 +4,50 @@
 
 ### ✨ Features and improvements
 
-- _...Add new stuff here..._
+- **PMTiles output, and PMTiles as a source.** Name the output `.pmtiles` and
+  both commands write one; `source_type: "pmtiles"` reads one. A PMTiles
+  archive is a single file a range request can read a tile out of, which is
+  what a tileset has to be to be served from object storage or seeded to a
+  swarm — where an MBTiles has to be unpacked or proxied first.
+
+  ```
+  rio rgbify -e mapbox -b -10000 -i 0.1 --min-z 0 --max-z 8 --format png dem.vrt terrain.pmtiles
+  ```
+
+  ```json
+  {
+      "output_type": "pmtiles",
+      "output_path": "/path/to/merged.pmtiles",
+      "sources": [
+          { "path": "/path/to/bathymetry.pmtiles", "source_type": "pmtiles" },
+          { "path": "/path/to/terrain.mbtiles", "source_type": "mbtiles" }
+      ]
+  }
+  ```
+
+  Sources of either kind mix freely in one merge, and take the same options as
+  each other — `PMTilesSource` inherits every field of `MBTilesSource` rather
+  than repeating them, so an option added to one is an option both have.
+
+  Nothing is written to an MBTiles on the way. Tiles go into the archive as
+  they are encoded, which is what keeps a planet-scale run from needing a
+  scratch copy of its own output; only one directory entry per tile is held in
+  memory. The container is taken from the output file extension, or named with
+  `--archive-format` for `rgbify` and `output_type` for `merge`, for an output
+  called something else.
+
+  The archives are **clustered** — tiles are written in ascending tile id, so a
+  reader asking for a range of the file gets tiles that are near each other on
+  the map. That is the whole point of the format for a range-requesting client,
+  and it is not automatic: it is why `rgbify` sorts its tile list and consumes
+  worker results in order rather than as they finish, and why the merge hands
+  encoded tiles back to one writer instead of having every worker write its own.
+
+  Header and metadata match what our [mbutil](https://github.com/TechIdiots-LLC/mbutil)
+  fork writes, so `mb-util` reads these archives and converts them back and
+  forth. `encoding` — the one thing about a terrain tileset that cannot be read
+  off the pixels — travels in the metadata, and metadata values are strings
+  either way, which is what an MBTiles `metadata` table hands back.
 
 ### 🐞 Bug fixes
 

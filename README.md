@@ -47,10 +47,11 @@ sudo apt install python3-dev libspatialindex-dev libgeos-dev gdal-bin python3-gd
 
 ### `rgbify` Command
 
-The `rgbify` command is used to encode a raster into RGB and output it as a GeoTIFF or an MBTiles file.
+The `rgbify` command is used to encode a raster into RGB and output it as a GeoTIFF, an MBTiles file, or a PMTiles archive.
 
 -   Input can be any raster readable by `rasterio`
--   Output can be a GeoTIFF or an MBTiles file, both created using tile-based processing.
+-   Output can be a GeoTIFF, an MBTiles file, or a PMTiles archive, all created using tile-based processing.
+-   The container is taken from the output file extension. `--archive-format` overrides it, for an output named something else.
 
 ```
 Usage: rio rgbify [OPTIONS] SRC_PATH DST_PATH
@@ -73,6 +74,10 @@ Options:
                                   (.mbtiles output only)
   --min-z INTEGER                 Minimum zoom to tile (.mbtiles output only)
   --format [png|webp]             Output tile format (.mbtiles output only)
+  --archive-format [mbtiles|pmtiles]
+                                  Output container, as opposed to --format,
+                                  which is the image inside it [DEFAULT: from
+                                  the output file extension]
   -j, --workers INTEGER           Workers to run [DEFAULT=4]
   -v, --verbose
   --batch-size INTEGER            Number of tiles to process at a time in each
@@ -94,9 +99,15 @@ rio rgbify -e mapbox -b -10000 -i 0.1 --min-z 0 --max-z 8 -j 24 --format png SRC
 rio rgbify -e terrarium --min-z 0 --max-z 8 -j 24 --format png SRC_PATH.vrt DST_PATH.mbtiles
 ```
 
+### PMTiles example
+
+```
+rio rgbify -e mapbox -b -10000 -i 0.1 --min-z 0 --max-z 8 -j 24 --format png SRC_PATH.vrt DST_PATH.pmtiles
+```
+
 ### `merge` Command
 
-The `merge` command is used to merge multiple MBTiles or Raster files into one output MBTiles file. This is done by taking a JSON configuration file.
+The `merge` command is used to merge multiple MBTiles, PMTiles, or Raster files into one output MBTiles file or PMTiles archive. This is done by taking a JSON configuration file.
 
 ```
 Usage: rio merge [OPTIONS]
@@ -182,11 +193,12 @@ The `merge` command makes use of a json configuration file which should be passe
 
 **Explanation:**
 
-*   **`source_type` (Optional, Default: `mbtiles`):** This is a new key which tells the program whether the sources are `mbtiles` or `raster`.
+*   **`output_type` (Optional, Default: `mbtiles`):** The output container — `mbtiles`, `pmtiles`, or `raster`. It wins over the `output_path` extension, so a config asking for `pmtiles` gets one whatever the file is called.
+*   **`source_type` (Optional, Default: `mbtiles`):** This is a new key which tells the program whether the sources are `mbtiles`, `pmtiles`, or `raster`. `mbtiles` and `pmtiles` sources take exactly the same options as each other.
 *   **`sources` (Required):**
     *   A list of objects defining the input MBTiles or Raster files.
-    *   **MBTiles Sources**:
-        *   `path` (Required): The path to the MBTiles file.
+    *   **MBTiles and PMTiles Sources**:
+        *   `path` (Required): The path to the MBTiles file or PMTiles archive.
         *   `encoding` (Optional, Default: `"mapbox"`): The encoding used for the MBTiles file (`"mapbox"`, `"terrarium"` or `"custom"`).
         *   `redFactor`, `greenFactor`, `blueFactor`, `baseShift` (Required with `"custom"`): The four numbers that describe how this source packs a height, as MapLibre's style-spec defines them — `height = r*redFactor + g*greenFactor + b*blueFactor - baseShift`. All four are required; three of four is refused, because the tile cannot be decoded either way. `snake_case` spellings are accepted too.
         *   `height_adjustment` (Optional, Default: `0.0`): A floating-point value (in meters) to adjust the elevation of that particular input. Positive values raise the elevation, and negative values lower the elevation.
@@ -204,7 +216,7 @@ The `merge` command makes use of a json configuration file which should be passe
         *   `height_adjustment` (Optional, Default: `0.0`): A floating-point value (in meters) to adjust the elevation of that particular input. Positive values raise the elevation, and negative values lower the elevation.
         *   `mask_values` (Optional, Default `[0.0]`): A list of numbers representing the elevation values to mask.
         *   `mask_range` (Optional, Default `[]`): A `[low, high]` band of heights meaning "no data here", or a list of such bands. Both ends are included. Nodata is rarely one number by the time it reaches a merge: a source resampled on its way to being built does not hold what it was authored with, so a sea authored as `0` arrives spread over `-0.9 m` to `0` — and `mask_values` on the two ends of that leaves everything between standing proud of whatever is underneath, which a hillshade picks out as a scatter of bright pixels. Compared to the thousandth, so a band includes the number written on it.
-*   `output_path` (Optional, Default: `"output.mbtiles"`): The output path for the merged MBTiles file.
+*   `output_path` (Optional, Default: `"output.mbtiles"`, or `"output.pmtiles"` under `output_type: "pmtiles"`): The output path for the merged archive.
 *   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"`, `"terrarium"` or `"custom"`).
 *   `output_redFactor`, `output_greenFactor`, `output_blueFactor`, `output_baseShift` (Required with `output_encoding: "custom"`): The formula to write the merged tiles with. Sources may use different encodings from each other and from the output — everything is decoded to metres before it is merged, so the encodings only have to be readable, not to match.
 

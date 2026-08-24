@@ -5,3 +5,4 @@ Pillow
 mercantile
 scipy
 psutil
+pmtiles>=3.7
