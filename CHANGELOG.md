@@ -49,9 +49,33 @@
   off the pixels — travels in the metadata, and metadata values are strings
   either way, which is what an MBTiles `metadata` table hands back.
 
+  Conformance to [spec/v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md)
+  is tested by parsing the raw bytes rather than by reading an archive back
+  with the library that wrote it — a writer bug and a reader bug that agree
+  would pass that. Every shape this package can produce goes through it, since
+  the ones that break a MUST are the unusual ones.
+
 ### 🐞 Bug fixes
 
-- _...Add new stuff here..._
+- **The zoom range in the PMTiles header now describes the tiles that are
+  actually there.** `pmtiles` 3.7.0 takes it from the first and last directory
+  entries' tile ids, and the last entry's id is where that entry's *run*
+  starts. Identical tiles are run-length encoded, so a run crossing a zoom
+  boundary left `max_zoom` naming a zoom shallower than the deepest tile in
+  the archive — and a client reads that header to decide what to request, so
+  the tiles past it were never asked for.
+
+  Terrain is the case that hits it: an ocean tile is byte-identical over huge
+  areas, so the runs are long. An all-ocean z0–z3 archive came out declaring
+  `max_zoom: 0` with every z3 tile present and unreachable. The header is
+  rewritten after finalising with the range that was written.
+
+- **`version` in tileset metadata is a valid SemVer string.** It was `"1"`.
+  The PMTiles v3 spec requires this key to be valid
+  [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) where it appears, and
+  these archives are read by clients that hold the spec to it. Changed for
+  MBTiles output too, so that converting one with `mb-util` does not produce a
+  PMTiles that breaks the spec.
 
 ## 0.7.0
 

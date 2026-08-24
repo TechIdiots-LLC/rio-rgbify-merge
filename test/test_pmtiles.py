@@ -45,6 +45,9 @@ from rio_rgbify.scripts.cli import main_group as cli, rgbify
 
 from pmtiles.tile import Compression, TileType
 
+# test/ has no __init__.py, so pytest puts this directory on sys.path.
+from pmtiles_spec_validator import SpecViolation, validate as validate_spec
+
 
 TILE_SIZE = 256
 WORLD = (-180.0, -85.05, 180.0, 85.05)
@@ -271,6 +274,67 @@ class TestPMTilesWriter:
             reader.close()
         assert all(isinstance(v, str) for v in meta.values()), meta
         assert meta["minzoom"] == "0" and meta["maxzoom"] == "1"
+
+    def test_zoom_range_survives_a_run_across_a_zoom_boundary(self, tmp_path):
+        """The header must name the deepest zoom the archive actually holds.
+
+        pmtiles 3.7.0's finalize() derives the range from the last directory
+        entry's tile id, which is where that entry's *run* starts. Identical
+        tiles get run-length encoded, and a run crossing a zoom boundary then
+        leaves max_zoom naming a zoom the file has tiles below. Terrain is
+        exactly the case that hits it -- an ocean tile is byte-identical over
+        huge areas -- and a client reading the header never asks for the rest.
+        """
+        out = tmp_path / "ocean.pmtiles"
+        same = _tile_bytes(0.0)
+        keys = [(z, x, y) for z in range(4) for x in range(1 << z) for y in range(1 << z)]
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 3, "mapbox", "png")
+            for z, x, tms_y in sorted(keys, key=lambda k: tile_id_from_tms(*k)):
+                w.insert_tile_with_retry([x, tms_y, z], same)
+
+        reader = PMTilesReader(out)
+        try:
+            header = reader.header()
+            # One entry for all 85 tiles: the run really does span the zooms.
+            assert header["tile_entries_count"] == 1
+            assert header["addressed_tiles_count"] == len(keys)
+            assert (header["min_zoom"], header["max_zoom"]) == (0, 3)
+            assert reader.metadata()["maxzoom"] == "3"
+            # And the deepest tile is genuinely reachable.
+            assert reader.get_tile(3, 7, 7) == same
+        finally:
+            reader.close()
+
+    def test_zoom_range_reflects_what_was_written_not_what_was_asked_for(self, tmp_path):
+        out = tmp_path / "short.pmtiles"
+        with PMTilesWriter(out) as w:
+            # Declares 0-5, writes 0-1.
+            w.add_bounds_center_metadata(list(WORLD), 0, 5, "mapbox", "png")
+            for z, x, tms_y in ((0, 0, 0), (1, 0, 0), (1, 1, 1)):
+                w.insert_tile_with_retry([x, tms_y, z], _tile_bytes(10.0 * z + x))
+
+        reader = PMTilesReader(out)
+        try:
+            header, meta = reader.header(), reader.metadata()
+            assert (header["min_zoom"], header["max_zoom"]) == (0, 1)
+            # Header and metadata must not disagree about the same archive.
+            assert meta["minzoom"] == str(header["min_zoom"])
+            assert meta["maxzoom"] == str(header["max_zoom"])
+        finally:
+            reader.close()
+
+    def test_metadata_version_is_semver(self, tmp_path):
+        """Spec v3 section 5: `version`, if present, MUST be valid SemVer."""
+        import re
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 1.0})
+        reader = PMTilesReader(out)
+        try:
+            version = reader.metadata()["version"]
+        finally:
+            reader.close()
+        assert re.match(r"^\d+\.\d+\.\d+", version), version
 
     def test_webp_sets_the_webp_tile_type(self, tmp_path):
         out = tmp_path / "out.pmtiles"
@@ -685,6 +749,114 @@ class TestRGBTilerPMTilesOutput:
                 assert reader.header()["addressed_tiles_count"] > 0
             finally:
                 reader.close()
+
+
+# ---------------------------------------------------------------------------
+# Conformance to spec/v3/spec.md
+#
+# Checked by parsing the raw bytes rather than by reading the archive back
+# with the same library that wrote it -- a writer bug and a reader bug that
+# agree would pass that. Every shape of archive this package can produce goes
+# through it, because the ones that break a MUST are the unusual ones: a run
+# spanning a zoom boundary, a directory deep enough to need leaves.
+# ---------------------------------------------------------------------------
+
+class TestSpecConformance:
+
+    def test_the_validator_accepts_the_specs_own_archives(self):
+        """Calibration. A validator nothing fails is not evidence of anything."""
+        spec_dir = Path(__file__).resolve().parents[2] / "PMTiles" / "spec" / "v3"
+        if not spec_dir.is_dir():
+            pytest.skip("PMTiles checkout not found beside this repo")
+        good = [
+            "protomaps(vector)ODbL_firenze.pmtiles",
+            "stamen_toner(raster)CC-BY+ODbL_z3.pmtiles",
+        ]
+        checked = 0
+        for name in good:
+            if (spec_dir / name).exists():
+                validate_spec(spec_dir / name)
+                checked += 1
+        if not checked:
+            pytest.skip("no reference archives to calibrate against")
+
+    def test_tiler_output_conforms(self, tmp_path):
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 10.0, (1, 0, 0): 20.0, (1, 1, 1): 30.0})
+        info = validate_spec(out)
+        assert info["clustered"] is True
+        assert info["tile_type"] == "PNG"
+
+    def test_webp_output_conforms(self, tmp_path):
+        out = tmp_path / "out.pmtiles"
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 0, "mapbox", "webp")
+            w.insert_tile_with_retry([0, 0, 0], _tile_bytes(fmt=ImageFormat.WEBP))
+        assert validate_spec(out)["tile_type"] == "WebP"
+
+    def test_a_single_tile_archive_conforms(self, tmp_path):
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 10.0})
+        info = validate_spec(out)
+        assert (info["min_zoom"], info["max_zoom"]) == (0, 0)
+
+    def test_a_deduplicated_archive_conforms(self, tmp_path):
+        """Identical tiles run-length encoded across a zoom boundary."""
+        out = tmp_path / "ocean.pmtiles"
+        same = _tile_bytes(0.0)
+        keys = [(z, x, y) for z in range(4) for x in range(1 << z) for y in range(1 << z)]
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 3, "mapbox", "png")
+            for z, x, tms_y in sorted(keys, key=lambda k: tile_id_from_tms(*k)):
+                w.insert_tile_with_retry([x, tms_y, z], same)
+        info = validate_spec(out)
+        assert info["entries"] == 1 and info["addressed"] == len(keys)
+        assert (info["min_zoom"], info["max_zoom"]) == (0, 3)
+
+    def test_an_archive_with_leaf_directories_conforms(self, monkeypatch, tmp_path):
+        import pmtiles.writer as pmtiles_writer_mod
+        real = pmtiles_writer_mod.optimize_directories
+        monkeypatch.setattr(pmtiles_writer_mod, "optimize_directories",
+                            lambda entries, budget: real(entries, 100))
+
+        out = tmp_path / "leafy.pmtiles"
+        tiles = {(z, x, y): f"tile-{z}-{x}-{y}".encode() * 4
+                 for z in (0, 1, 5, 6)
+                 for x in range(1 << z) for y in range(1 << z)}
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 6, "mapbox", "png")
+            for z, x, tms_y in sorted(tiles, key=lambda k: tile_id_from_tms(*k)):
+                w.insert_tile_with_retry([x, tms_y, z], tiles[(z, x, tms_y)])
+        info = validate_spec(out)
+        assert info["leaf_directories"] > 0, "no leaves were written"
+        assert info["addressed"] == len(tiles)
+
+    def test_merged_output_conforms(self, tmp_path):
+        src = tmp_path / "src.mbtiles"
+        _make_mbtiles(src, {(z, x, y): 100.0 + z
+                            for z in range(3)
+                            for x in range(1 << z) for y in range(1 << z)})
+        out = tmp_path / "merged.pmtiles"
+        TerrainRGBMerger(
+            [MBTilesSource(path=src, encoding=EncodingType.MAPBOX)],
+            output_path=out, output_encoding=EncodingType.MAPBOX,
+            output_image_format=ImageFormat.PNG,
+            min_zoom=0, max_zoom=2, processes=1, bounds=WORLD,
+        ).process_all(min_zoom=0)
+        info = validate_spec(out)
+        assert info["clustered"] is True
+        assert info["metadata"]["encoding"] == "mapbox"
+
+    def test_the_validator_rejects_a_corrupted_archive(self, tmp_path):
+        """Guards against a validator that passes everything."""
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 10.0, (1, 0, 0): 20.0})
+        raw = bytearray(out.read_bytes())
+        raw[101] = 9          # max zoom byte, now above any tile in the file
+        broken = tmp_path / "broken.pmtiles"
+        broken.write_bytes(raw)
+        with pytest.raises(SpecViolation, match="max zoom"):
+            validate_spec(broken)
 
 
 # ---------------------------------------------------------------------------

@@ -162,7 +162,10 @@ class MBTilesDatabase:
             "format": format,
             "name": name,
             "description": f"Created {datetime.datetime.now()}",
-            "version": "1",
+            # SemVer, because the PMTiles v3 spec requires it of this key and
+            # these tables get converted into PMTiles metadata -- by our own
+            # writer, and by mb-util.
+            "version": "1.0.0",
             "type": "baselayer",
             "minzoom": min_zoom,
             "maxzoom": max_zoom,

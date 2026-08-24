@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import List, Optional
 
 from pmtiles.reader import MmapSource, Reader, deserialize_directory
-from pmtiles.tile import Compression, TileType, tileid_to_zxy, zxy_to_tileid
+from pmtiles.tile import (
+    Compression, TileType, serialize_header, tileid_to_zxy, zxy_to_tileid,
+)
 from pmtiles.writer import Writer
 
 logger = logging.getLogger(__name__)
@@ -144,6 +146,9 @@ class PMTilesWriter:
         self._header = {}
         self._metadata = {}
         self._count = 0
+        # The zoom range actually written, as opposed to the one asked for.
+        self._min_z = None
+        self._max_z = None
 
     # -- Context manager ----------------------------------------------------
 
@@ -169,12 +174,44 @@ class PMTilesWriter:
                     f"the source."
                 )
             logger.info(f"Finalising {self._count} tiles into {self.outpath}")
+            # The zoom range the archive really covers, which is what a client
+            # reads the header to find out.
+            self._metadata["minzoom"] = str(self._min_z)
+            self._metadata["maxzoom"] = str(self._max_z)
             self._writer.finalize(self._header, self._metadata)
+            self._correct_zoom_range()
             self._file.close()
             logger.info(f"Wrote {self.outpath}")
         finally:
             self._writer = None
             self._file = None
+
+    def _correct_zoom_range(self):
+        """Rewrite the header if finalize() understated the zoom range.
+
+        pmtiles 3.7.0 takes the range from the first and last directory
+        entries' tile ids, and the last entry's id is where its *run* starts.
+        A run of identical tiles that crosses a zoom boundary therefore leaves
+        max_zoom naming a zoom shallower than the deepest tile in the file, and
+        a client reading the header never asks past it. Terrain is the case
+        that hits it: an ocean tile is byte-identical over huge areas, so the
+        runs are long.
+
+        finalize() fills the header dict in place, so everything else in it is
+        already right; only the two zoom bytes are rewritten, over the 127
+        bytes at the front of the file.
+        """
+        if (self._header["min_zoom"], self._header["max_zoom"]) == (self._min_z, self._max_z):
+            return
+        logger.debug(
+            f"correcting header zoom range from "
+            f"{self._header['min_zoom']}-{self._header['max_zoom']} to "
+            f"{self._min_z}-{self._max_z}"
+        )
+        self._header["min_zoom"] = self._min_z
+        self._header["max_zoom"] = self._max_z
+        self._file.seek(0)
+        self._file.write(serialize_header(self._header))
 
     def _abandon(self):
         """Drop the temp buffer and the part-written output."""
@@ -230,7 +267,9 @@ class PMTilesWriter:
             "format": format,
             "name": name,
             "description": f"Created {datetime.datetime.now()}",
-            "version": "1",
+            # Spec v3 section 5: if `version` is present it MUST be a valid
+            # SemVer 2.0.0 string, and "1" is not one.
+            "version": "1.0.0",
             "type": "baselayer",
             "minzoom": min_zoom,
             "maxzoom": max_zoom,
@@ -254,6 +293,8 @@ class PMTilesWriter:
         xyz_y = y if use_inverse_y else flip_y(z, y)
         self._writer.write_tile(zxy_to_tileid(z, x, xyz_y), contents)
         self._count += 1
+        self._min_z = z if self._min_z is None else min(self._min_z, z)
+        self._max_z = z if self._max_z is None else max(self._max_z, z)
 
     # -- Reporting ----------------------------------------------------------
 
