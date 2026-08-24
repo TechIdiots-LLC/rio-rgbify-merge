@@ -1,7 +1,13 @@
 # rio-rgbify changelog
 
 ## main
+### ✨ Features and improvements
+- _...Add new stuff here..._
 
+### 🐞 Bug fixes
+- _...Add new stuff here..._
+
+## 0.8.0
 ### ✨ Features and improvements
 
 - **PMTiles output, and PMTiles as a source.** Name the output `.pmtiles` and
@@ -104,6 +110,8 @@
   `"true"` or `"false"` — lowercase, so the same JSON parse reads both.
 
 ### 🐞 Bug fixes
+
+- Write tiles into a PMTiles archive, and read sources out of one ([#2](https://github.com/TechIdiots-LLC/rio-rgbify-merge/pull/2)) (@acalcutt)
 
 - **The zoom range in the PMTiles header now describes the tiles that are
   actually there.** `pmtiles` 3.7.0 takes it from the first and last directory
