@@ -12,6 +12,7 @@ from rasterio import transform
 from rasterio.warp import reproject, transform_bounds
 from rasterio.enums import Resampling
 from rio_rgbify.database import MBTilesDatabase
+from rio_rgbify.pmtiles_writer import PMTilesWriter, is_pmtiles_path, tile_id_from_xyz
 from rio_rgbify.image import ImageEncoder
 import logging
 import signal
@@ -140,6 +141,10 @@ class RGBTiler:
         format="webp",
         resampling=Resampling.nearest,
         bounding_tile=None,
+        archive_format=None,
+        name="Terrain",
+        description=None,
+        attribution=None,
     ):
         self.inpath = inpath
         self.outpath = outpath
@@ -152,6 +157,19 @@ class RGBTiler:
         self.base_val = base_val
         self.round_digits = round_digits
         self.resampling = resampling
+        # Written into the tileset's metadata. Worth setting for a PMTiles
+        # output: its metadata cannot be edited afterwards without rewriting
+        # the archive, because changing its length moves everything after it.
+        self.name = name
+        self.description = description
+        self.attribution = attribution
+        # The container, as opposed to `format`, which is the image inside it.
+        # None means take it from the extension, which is what the CLI passes
+        # unless someone names a container that disagrees with the filename.
+        self.archive_format = (
+            archive_format.lower() if archive_format
+            else ("pmtiles" if is_pmtiles_path(outpath) else "mbtiles")
+        )
 
     @staticmethod
     def _tile_range(min_tile, max_tile):
@@ -236,6 +254,16 @@ class RGBTiler:
                 constrained_bbox = list(mercantile.bounds(self.bounding_tile))
                 tiles = list(self._make_tiles(constrained_bbox, "EPSG:4326", self.min_z, self.max_z, verbose = verbose))
                 bounds = constrained_bbox
+            if self.archive_format == "pmtiles":
+                # PMTiles stores tiles in tile-id order, and an archive whose
+                # tiles arrived in some other order is marked unclustered --
+                # correct, but a reader asking for a range of it then gets
+                # tiles it did not want. Ordering the work is what keeps the
+                # archive clustered, and is why the results below are consumed
+                # in order rather than as they finish.
+                # _make_tiles yields [x, y, z] with mercantile's XYZ y.
+                tiles.sort(key=lambda t: tile_id_from_xyz(t[2], t[0], t[1]))
+
             print(f"Type of tiles: {type(tiles)}")
             print(f"tiles before sending to imap: {tiles[0:10]}") #print the first 10 tiles
 
@@ -272,19 +300,22 @@ class RGBTiler:
         )
 
         with self.db:
-            self.db.add_bounds_center_metadata(bounds, self.min_z, self.max_z, self.encoding, self.format, "Terrain")
+            self.db.add_bounds_center_metadata(bounds, self.min_z, self.max_z, self.encoding, self.format, self.name, self.description, self.attribution)
 
             with ctx.Pool(processes, initializer=self._init_worker) as pool:
                 try:
                     total_processed = 0
-                    for i, result in enumerate(pool.imap_unordered(process_func, tiles, chunksize=batch_size), 1):
+                    # Ordered for PMTiles, which needs the tiles in the order
+                    # they were sorted into; as they finish otherwise.
+                    imap = pool.imap if self.archive_format == "pmtiles" else pool.imap_unordered
+                    for i, result in enumerate(imap(process_func, tiles, chunksize=batch_size), 1):
                         if result:
                             self.db.insert_tile_with_retry(*result, use_inverse_y=True)
                             total_processed += 1
                             print(f"Processed {total_processed}/{total_tiles} tiles")
                         
                         if i % batch_size == 0 or i == total_tiles:   # Commit after each batch or at the end
-                            self.db.conn.commit()
+                            self.db.commit()
                             print("Committed to database")
 
                     print(f"Completed processing {total_processed} tiles")
@@ -303,7 +334,10 @@ class RGBTiler:
 
     def __enter__(self):
         try:
-            self.db = MBTilesDatabase(self.outpath)
+            if self.archive_format == "pmtiles":
+                self.db = PMTilesWriter(self.outpath)
+            else:
+                self.db = MBTilesDatabase(self.outpath)
         except Exception as e:
             logging.error(f"Failed to initialize database: {e}")
             self.db = None

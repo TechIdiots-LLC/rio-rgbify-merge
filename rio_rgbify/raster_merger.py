@@ -80,7 +80,8 @@ class RasterRGBMerger:
                  resampling=Resampling.lanczos, processes=None, default_tile_size=512,
                  output_image_format=ImageFormat.PNG,
                  min_zoom=0, max_zoom=None, bounds=None, gaussian_blur_sigma=0.2, base_val=-10000, interval=0.1,
-                 bounds_source=None, sparse_tiles=False):
+                 bounds_source=None, sparse_tiles=False,
+                 name="Merged Raster", description=None, attribution=None):
         self.sources = sources
         self.output_path = Path(output_path)
         self.output_encoding = output_encoding
@@ -93,6 +94,10 @@ class RasterRGBMerger:
         self.min_zoom = min_zoom
         self.max_zoom = max_zoom
         self.bounds = bounds
+        # Written into the tileset's metadata, as for the other two mergers.
+        self.name = name
+        self.description = description
+        self.attribution = attribution
         self.write_queue = Queue()
         self.gaussian_blur_sigma = gaussian_blur_sigma # Store the sigma for gaussian blur
         self.base_val = base_val # Store the base_val for mapbox output
@@ -391,7 +396,7 @@ class RasterRGBMerger:
         self.logger.info(f"Processing zoom levels {min_zoom} to {max_zoom}")
 
         with MBTilesDatabase(self.output_path) as db:
-            db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, "Merged Raster")
+            db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
 
         for zoom in range(min_zoom, max_zoom + 1):
             self.process_zoom_level(zoom, verbose)

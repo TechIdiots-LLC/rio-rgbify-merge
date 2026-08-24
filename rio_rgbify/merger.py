@@ -13,8 +13,11 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 from typing import Optional, Tuple, List, Dict
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from rio_rgbify.database import MBTilesDatabase
+from rio_rgbify.pmtiles_writer import (
+    PMTilesReader, PMTilesWriter, is_pmtiles_path, tile_id_from_tms,
+)
 from rio_rgbify.image import ImageFormat, ImageEncoder
 from queue import Queue
 import functools
@@ -96,6 +99,38 @@ class MBTilesSource:
 
 
 @dataclass
+class PMTilesSource(MBTilesSource):
+    """An MBTiles source that happens to live in a PMTiles archive.
+
+    Every option means the same thing for either container, so this subclasses
+    rather than repeats them: a field added to MBTilesSource is a field PMTiles
+    sources get too, which is how the two stayed in step here and did not in
+    the tuple that used to be pickled to the workers.
+    """
+
+
+def _open_source(source: MBTilesSource):
+    """Open a source for reading, whichever container it is in."""
+    if isinstance(source, PMTilesSource):
+        return PMTilesReader(source.path)
+    return sqlite3.connect(source.path)
+
+
+def _read_tile(conn, zoom: int, x: int, tms_y: int) -> Optional[bytes]:
+    """Raw tile bytes from an open source, at the TMS y this merger works in."""
+    if isinstance(conn, PMTilesReader):
+        return conn.get_tile(zoom, x, tms_y)
+
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
+        (zoom, x, tms_y)
+    )
+    result = cursor.fetchone()
+    return result[0] if result is not None else None
+
+
+@dataclass
 class TileData:
     """Container for decoded tile data"""
     data: np.ndarray
@@ -111,7 +146,9 @@ class TerrainRGBMerger:
                  resampling=Resampling.lanczos, sparse_tiles=False, processes=None, default_tile_size=512,
                  output_image_format=ImageFormat.PNG,
                  min_zoom=0, max_zoom=None, bounds=None, gaussian_blur_sigma=0.2,
-                 bounds_source=None, output_encoding_factors=None):
+                 bounds_source=None, output_encoding_factors=None,
+                 archive_format=None, name="Merged Terrain", description=None,
+                 attribution=None):
         self.sources = sources
         self.output_path = Path(output_path)
         self.output_encoding = output_encoding
@@ -130,6 +167,18 @@ class TerrainRGBMerger:
         self.bounds_source = bounds_source
         # Only meaningful when output_encoding is CUSTOM.
         self.output_encoding_factors = output_encoding_factors
+        # Written into the tileset's metadata. Worth setting for a PMTiles
+        # output: its metadata cannot be edited afterwards without rewriting
+        # the archive, because changing its length moves everything after it.
+        self.name = name
+        self.description = description
+        self.attribution = attribution
+        # The container, as opposed to `output_image_format`, which is the
+        # image inside it. None means take it from the extension.
+        self.archive_format = (
+            archive_format.lower() if archive_format
+            else ("pmtiles" if is_pmtiles_path(self.output_path) else "mbtiles")
+        )
 
         """
         Initializes the TerrainRGBMerger.
@@ -160,6 +209,15 @@ class TerrainRGBMerger:
             The sigma value to use for the gaussian blur filter, defaults to 0.2
         bounds_source: Optional[int]
             The index of the source to use for the bounds and tiles, defaults to None
+        archive_format: Optional[str]
+            The output container, "mbtiles" or "pmtiles". None takes it from
+            the output path extension.
+        name: str
+            The tileset's name, written to its metadata.
+        description: Optional[str]
+            The tileset's description. None records the time of the run.
+        attribution: Optional[str]
+            A credit line for the tileset. Left out of the metadata when None.
         """
     
     def _decode_tile(self, tile_data: bytes, tile: mercantile.Tile, encoding: EncodingType, source: MBTilesSource, source_index: int) -> Tuple[Optional[np.ndarray], dict]:
@@ -261,16 +319,11 @@ class TerrainRGBMerger:
         
         while current_zoom >= 0:
             conn = source_conns[source.path] # get the database connection from the dictionary
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=?",
-                (current_zoom, current_x, current_y)
-            )
-            result = cursor.fetchone()
-            
-            if result is not None:
+            raw = _read_tile(conn, current_zoom, current_x, current_y)
+
+            if raw is not None:
                 try:
-                    data_meta = self._decode_tile(result[0], mercantile.Tile(current_x, current_y, current_zoom), source.encoding, source, source_index) #pass in source
+                    data_meta = self._decode_tile(raw, mercantile.Tile(current_x, current_y, current_zoom), source.encoding, source, source_index) #pass in source
                     if data_meta[0] is None:
                         return None
                     if data_meta[0].size == 0:
@@ -543,15 +596,26 @@ class TerrainRGBMerger:
             self.logger.error(f"Error processing tile {tile.z}/{tile.x}/{tile.y}: {e}")
             raise
 
-    def process_zoom_level(self, zoom: int, verbose):
-        """Process all tiles for a given zoom level in parallel"""
+    def process_zoom_level(self, zoom: int, verbose, writer=None):
+        """Process all tiles for a given zoom level in parallel.
+
+        With a `writer`, the workers hand their encoded tiles back and it
+        writes them; without one they each write their own row to the output
+        MBTiles, which is the cheaper arrangement when the output can take it.
+        """
         self.logger.info(f"Processing zoom level ")
         source_conns = {}
         for s in self.sources:
-            source_conns[s.path] = sqlite3.connect(s.path)
+            source_conns[s.path] = _open_source(s)
         
         # Get list of tiles to process
         tiles = self._get_tiles_for_zoom(zoom, source_conns)
+        if writer is not None:
+            # A PMTiles archive is clustered only if its tiles arrive in
+            # ascending tile id, so the work is ordered and the results below
+            # are taken in order rather than as they finish. Tile ids rise with
+            # zoom, so sorting within a level is enough for the whole archive.
+            tiles.sort(key=lambda t: tile_id_from_tms(t.z, t.x, t.y))
         self.logger.info(f"Found {len(tiles)} tiles to process")
 
         # Create task tuples with all necessary data
@@ -569,19 +633,19 @@ class TerrainRGBMerger:
                 self.resampling,
                 self.sparse_tiles,
                 self.output_image_format.value,
-                verbose
+                verbose,
+                writer is not None,
             )
             for tile in tiles
         ]
 
         # Process tiles in parallel using the standalone function
         with multiprocessing.Pool(self.processes) as pool:
-            for _ in pool.imap_unordered(
-                process_tile_task,
-                tasks,
-                chunksize=1
-            ):
-                pass
+            imap = pool.imap if writer is not None else pool.imap_unordered
+            for result in imap(process_tile_task, tasks, chunksize=1):
+                if writer is not None and result is not None:
+                    z, x, tms_y, image_bytes = result
+                    writer.insert_tile_with_retry([x, tms_y, z], image_bytes)
         for conn in source_conns.values():
             if conn:
                 conn.close()
@@ -602,12 +666,17 @@ class TerrainRGBMerger:
             else:
                 source = self.sources[-1]
             conn = source_conns[source.path]
-            cursor = conn.cursor()
-            cursor.execute(
-                'SELECT DISTINCT tile_column, tile_row FROM tiles WHERE zoom_level = ?',
-                (zoom,)
-            )
-            rows = cursor.fetchall()
+            if isinstance(conn, PMTilesReader):
+                # PMTiles has no index by zoom, so this walks the archive once
+                # for the level rather than asking for the level's rows.
+                rows = list(conn.tiles_at_zoom(zoom))
+            else:
+                cursor = conn.cursor()
+                cursor.execute(
+                    'SELECT DISTINCT tile_column, tile_row FROM tiles WHERE zoom_level = ?',
+                    (zoom,)
+                )
+                rows = cursor.fetchall()
             
             if not rows:
                 self.logger.warning(f"No tiles found for zoom level {zoom} in source {source.path}")
@@ -631,6 +700,13 @@ class TerrainRGBMerger:
         else:
             source = self.sources[-1]
 
+        if isinstance(source, PMTilesSource):
+            reader = PMTilesReader(source.path)
+            try:
+                return reader.max_zoom()
+            finally:
+                reader.close()
+
         with sqlite3.connect(source.path) as conn:
              cursor = conn.cursor()
              cursor.execute("SELECT MAX(zoom_level) FROM tiles")
@@ -643,19 +719,32 @@ class TerrainRGBMerger:
         max_zoom = self.max_zoom if self.max_zoom is not None else self.get_max_zoom_level()
         self.logger.info(f"Processing zoom levels {min_zoom} to {max_zoom}")
 
-        with MBTilesDatabase(self.output_path) as db:
-             db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, "Merged Terrain")
+        if self.archive_format == "pmtiles":
+            # One archive, held open across every zoom, written by this
+            # process alone -- see process_zoom_level.
+            with PMTilesWriter(self.output_path) as writer:
+                writer.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
+                for zoom in range(min_zoom, max_zoom + 1):
+                    self.process_zoom_level(zoom, verbose, writer=writer)
+        else:
+            with MBTilesDatabase(self.output_path) as db:
+                 db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
 
 
-        for zoom in range(min_zoom, max_zoom + 1):
-             self.process_zoom_level(zoom, verbose)
+            for zoom in range(min_zoom, max_zoom + 1):
+                 self.process_zoom_level(zoom, verbose)
 
         self.logger.info("Completed processing all zoom levels")
 
 @retry(attempts=5, base_delay=0.5, max_delay=5)
-def process_tile_task(task_tuple: tuple) -> None:
-    """Standalone function for processing tiles that can be pickled"""
-    tile, source_configs, output_path, output_encoding, output_nodata, resampling, sparse_tiles, output_format, verbose = task_tuple
+def process_tile_task(task_tuple: tuple):
+    """Standalone function for processing tiles that can be pickled.
+
+    Returns (z, x, tms_y, image_bytes) when the task asks for the tile back,
+    and None otherwise -- including for a tile that merged to nothing.
+    """
+    (tile, source_configs, output_path, output_encoding, output_nodata, resampling,
+     sparse_tiles, output_format, verbose, return_tile) = task_tuple
     # Configure logging for each process
     logging.basicConfig(
         level=logging.DEBUG,
@@ -671,13 +760,16 @@ def process_tile_task(task_tuple: tuple) -> None:
         # Reconstruct MBTilesSource objects and create connections
         for source in source_configs:
             sources.append(source)
-            source_conns[source.path] = sqlite3.connect(source.path)
+            source_conns[source.path] = _open_source(source)
 
         # create instance
         merger_instance = TerrainRGBMerger(sources, output_path, output_encoding=EncodingType(output_encoding), output_nodata = output_nodata, resampling=resampling, sparse_tiles = sparse_tiles, output_image_format=ImageFormat(output_format))
 
-        # Open database connection for the entire task
-        with MBTilesDatabase(output_path) as db:
+        # A PMTiles archive is one file with a header at the front, so only
+        # one process can hold it and the encoded tile goes back to the parent
+        # to be written. An MBTiles takes a row from anyone, so it keeps the
+        # write here rather than pickling every tile across the pool boundary.
+        with nullcontext() if return_tile else MBTilesDatabase(output_path) as db:
             # Extract tiles from all sources
             tile_datas = []
             for i, source in enumerate(sources):
@@ -707,6 +799,8 @@ def process_tile_task(task_tuple: tuple) -> None:
             image_bytes = ImageEncoder.save_rgb_to_bytes(rgb_data, output_format)
             if verbose:
                 print(f"image_bytes {len(image_bytes)}")
+            if return_tile:
+                return (tile.z, tile.x, tile.y, image_bytes)
             # Write to output database
             db.insert_tile_with_retry([tile.x, tile.y, tile.z], image_bytes)
 

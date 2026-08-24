@@ -20,6 +20,9 @@
     }
   ],
   "output_path": "/path/to/output.mbtiles",
+  "name": "Merged Terrain",
+  "description": "GEBCO bathymetry under JAXA land",
+  "attribution": "© GEBCO 2026, © JAXA",
   "output_encoding": "mapbox",
   "output_format": "webp",
   "resampling": "bilinear",

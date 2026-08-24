@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import re
 from rio_rgbify.mbtiler import RGBTiler
-from rio_rgbify.merger import TerrainRGBMerger, MBTilesSource, EncodingType
+from rio_rgbify.merger import TerrainRGBMerger, MBTilesSource, PMTilesSource, EncodingType
 from rio_rgbify.raster_merger import RasterRGBMerger, RasterSource
 from rio_rgbify.image import ImageFormat
 from rasterio.enums import Resampling
@@ -97,6 +97,24 @@ def main_group():
     "--resampling", type=click.Choice(["nearest", "bilinear", "cubic", "cubic_spline", "lanczos", "average", "mode", "gauss"], case_sensitive=False), default="nearest",
     help="Resampling method"
 )
+@click.option(
+    "--name", default="Terrain", show_default=True,
+    help="Tileset name, written to the output's metadata",
+)
+@click.option(
+    "--description", default=None,
+    help="Tileset description [DEFAULT: the time of the run]",
+)
+@click.option(
+    "--attribution", default=None,
+    help="Credit line for the tileset. Omitted from the metadata when unset",
+)
+@click.option(
+    "--archive-format",
+    type=click.Choice(["mbtiles", "pmtiles"], case_sensitive=False), default=None,
+    help="Output container, as opposed to --format, which is the image inside "
+         "it [DEFAULT: from the output file extension]",
+)
 # @click.pass_context
 # @creation_options
 def rgbify(
@@ -114,7 +132,11 @@ def rgbify(
     workers,
     verbose,
     batch_size,
-    resampling
+    resampling,
+    name,
+    description,
+    attribution,
+    archive_format,
 ):
     """rio-rgbify cli."""
 
@@ -148,6 +170,14 @@ def rgbify(
         max_z=max_z,
         min_z=min_z,
         resampling=resampling_enum,
+        archive_format=archive_format,
+        # Set these at the point the tileset is built. A PMTiles archive keeps
+        # its metadata between the root and leaf directories, so changing it
+        # afterwards moves every offset that follows and means rewriting the
+        # whole file.
+        name=name,
+        description=description,
+        attribution=attribution,
     ) as tiler:
         tiler.run(workers, batch_size = batch_size, verbose = verbose)
 
@@ -189,20 +219,31 @@ def merge(config, workers, verbose):
 
         sources = []
         output_type = config.get('output_type', 'mbtiles')
+        # Written to the output tileset's metadata. Worth setting for a
+        # PMTiles output, whose metadata cannot be edited afterwards without
+        # rewriting the archive.
+        tileset_metadata = dict(
+            description=config.get("description"),
+            attribution=config.get("attribution"),
+        )
 
-        if output_type.lower() != 'mbtiles' and output_type.lower() != 'raster':
-            logging.error("Invalid output_type, please use `mbtiles` or `raster`")
+        if output_type.lower() not in ('mbtiles', 'pmtiles', 'raster'):
+            logging.error("Invalid output_type, please use `mbtiles`, `pmtiles` or `raster`")
             raise Exception(f"Invalid output_type: ")
 
         for source in config['sources']:
             source_type = source.get('source_type','mbtiles') # Default to mbtiles if source_type is not set
-            if source_type.lower() != 'mbtiles' and source_type.lower() != 'raster':
-                logging.error("Invalid source_type, please use `mbtiles` or `raster`")
+            if source_type.lower() not in ('mbtiles', 'pmtiles', 'raster'):
+                logging.error("Invalid source_type, please use `mbtiles`, `pmtiles` or `raster`")
                 raise Exception(f"Invalid source_type: ")
 
-            if source_type.lower() == 'mbtiles':
+            if source_type.lower() in ('mbtiles', 'pmtiles'):
+                # Every option below means the same for either container.
+                source_class = (
+                    PMTilesSource if source_type.lower() == 'pmtiles' else MBTilesSource
+                )
                 sources.append(
-                    MBTilesSource(
+                    source_class(
                         path=Path(source["path"]),
                         encoding=EncodingType(source.get("encoding", "mapbox").lower()),
                         height_adjustment=source.get("height_adjustment", 0.0),
@@ -240,10 +281,10 @@ def merge(config, workers, verbose):
                     )
                 )
 
-        if output_type.lower() == 'mbtiles':
+        if output_type.lower() in ('mbtiles', 'pmtiles'):
             merger = TerrainRGBMerger(
                 sources,
-                output_path=config.get('output_path', 'output.mbtiles'),
+                output_path=config.get('output_path', f'output.{output_type.lower()}'),
                 output_encoding=EncodingType(config.get('output_encoding', "mapbox").lower()),
                 output_nodata=config.get("output_nodata", None),
                 output_image_format=ImageFormat(config.get('output_format', 'webp').lower()),
@@ -256,6 +297,11 @@ def merge(config, workers, verbose):
                 processes=workers,
                 bounds_source = config.get("bounds_source", None),
                 output_encoding_factors=_encoding_factors(config, prefix="output_"),
+                # output_type wins over the extension, so a config asking for
+                # pmtiles gets pmtiles whatever the file is called.
+                archive_format=output_type.lower(),
+                name=config.get("name", "Merged Terrain"),
+                **tileset_metadata,
             )
         elif output_type.lower() == 'raster':
             merger = RasterRGBMerger(
@@ -271,7 +317,9 @@ def merge(config, workers, verbose):
                 bounds=config.get("bounds", None),
                 gaussian_blur_sigma=config.get("gaussian_blur_sigma", 0.2),
                 processes=workers,
-                bounds_source = config.get("bounds_source", None)
+                bounds_source = config.get("bounds_source", None),
+                name=config.get("name", "Merged Raster"),
+                **tileset_metadata,
             )
 
         merger.process_all(min_zoom=config.get("min_zoom", 0), verbose = verbose)

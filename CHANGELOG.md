@@ -4,11 +4,126 @@
 
 ### ✨ Features and improvements
 
-- _...Add new stuff here..._
+- **PMTiles output, and PMTiles as a source.** Name the output `.pmtiles` and
+  both commands write one; `source_type: "pmtiles"` reads one. A PMTiles
+  archive is a single file a range request can read a tile out of, which is
+  what a tileset has to be to be served from object storage or seeded to a
+  swarm — where an MBTiles has to be unpacked or proxied first.
+
+  ```
+  rio rgbify -e mapbox -b -10000 -i 0.1 --min-z 0 --max-z 8 --format png dem.vrt terrain.pmtiles
+  ```
+
+  ```json
+  {
+      "output_type": "pmtiles",
+      "output_path": "/path/to/merged.pmtiles",
+      "sources": [
+          { "path": "/path/to/bathymetry.pmtiles", "source_type": "pmtiles" },
+          { "path": "/path/to/terrain.mbtiles", "source_type": "mbtiles" }
+      ]
+  }
+  ```
+
+  Sources of either kind mix freely in one merge, and take the same options as
+  each other — `PMTilesSource` inherits every field of `MBTilesSource` rather
+  than repeating them, so an option added to one is an option both have.
+
+  Nothing is written to an MBTiles on the way. Tiles go into the archive as
+  they are encoded, which is what keeps a planet-scale run from needing a
+  scratch copy of its own output; only one directory entry per tile is held in
+  memory. The container is taken from the output file extension, or named with
+  `--archive-format` for `rgbify` and `output_type` for `merge`, for an output
+  called something else.
+
+  The archives are **clustered** — tiles are written in ascending tile id, so a
+  reader asking for a range of the file gets tiles that are near each other on
+  the map. That is the whole point of the format for a range-requesting client,
+  and it is not automatic: it is why `rgbify` sorts its tile list and consumes
+  worker results in order rather than as they finish, and why the merge hands
+  encoded tiles back to one writer instead of having every worker write its own.
+
+  Header and metadata match what our [mbutil](https://github.com/TechIdiots-LLC/mbutil)
+  fork writes, so `mb-util` reads these archives and converts them back and
+  forth. `encoding` — the one thing about a terrain tileset that cannot be read
+  off the pixels — travels in the metadata, and metadata values are strings
+  either way, which is what an MBTiles `metadata` table hands back.
+
+  Conformance to [spec/v3](https://github.com/protomaps/PMTiles/blob/main/spec/v3/spec.md)
+  is tested by parsing the raw bytes rather than by reading an archive back
+  with the library that wrote it — a writer bug and a reader bug that agree
+  would pass that. Every shape this package can produce goes through it, since
+  the ones that break a MUST are the unusual ones.
+
+- **`name`, `description` and `attribution` can be set on the output.**
+  `--name`, `--description` and `--attribution` for `rgbify`; the same three
+  keys at the top level of a `merge` config. They were not settable at all
+  before: every tileset came out called "Terrain" or "Merged Terrain", with a
+  description that was the timestamp of the run and no credit line anywhere.
+
+  ```
+  rio rgbify --name "Ocean Floor" --attribution "© GEBCO 2026" dem.vrt out.pmtiles
+  ```
+
+  ```json
+  {
+      "name": "Ocean Floor",
+      "description": "GEBCO bathymetry under JAXA land",
+      "attribution": "© GEBCO 2026, © JAXA"
+  }
+  ```
+
+  Worth setting at the point the tileset is built rather than afterwards. A
+  PMTiles archive keeps its metadata between the root directory and the leaf
+  directories, so saying something different later changes its length, moves
+  every offset that follows it, and means writing the whole file again — which
+  for a planet-scale terrain archive is not a correction anyone makes twice.
+
+  `attribution` is left out of the metadata when it is not given, rather than
+  written empty: a consumer that renders a credit line renders an empty one.
+  `description` still falls back to the time of the run. Both containers and
+  all three commands — `rgbify`, `merge`, and raster output — record them the
+  same way, and all three survive a round trip through `mb-util`.
+
+- **`sparse` is recorded in the output's metadata**, alongside the `encoding`
+  that was already there. Between them they are what a server needs to serve a
+  terrain tileset it was handed: `encoding` to decode a height, and `sparse` to
+  know whether a missing tile means "overzoom from a lower one" (404) or
+  "there is genuinely nothing here" (204). tileserver-gl merges an archive's
+  metadata straight into its TileJSON, so the archive answers both questions
+  itself instead of needing them repeated in the server config.
+
+  Written by the merges, which are what have a `sparse_tiles` option. `rgbify`
+  writes no `sparse` key at all rather than writing `false`, which would claim
+  a decision it never made.
+
+  In a PMTiles archive it is a JSON boolean. Not the string `"false"`, which is
+  a non-empty string: a consumer writing `metadata.sparse ?? default` takes it
+  as given and then tests it for truth, turning a dense archive into one served
+  as sparse. An MBTiles `metadata` table can only hold text, so there it is
+  `"true"` or `"false"` — lowercase, so the same JSON parse reads both.
 
 ### 🐞 Bug fixes
 
-- _...Add new stuff here..._
+- **The zoom range in the PMTiles header now describes the tiles that are
+  actually there.** `pmtiles` 3.7.0 takes it from the first and last directory
+  entries' tile ids, and the last entry's id is where that entry's *run*
+  starts. Identical tiles are run-length encoded, so a run crossing a zoom
+  boundary left `max_zoom` naming a zoom shallower than the deepest tile in
+  the archive — and a client reads that header to decide what to request, so
+  the tiles past it were never asked for.
+
+  Terrain is the case that hits it: an ocean tile is byte-identical over huge
+  areas, so the runs are long. An all-ocean z0–z3 archive came out declaring
+  `max_zoom: 0` with every z3 tile present and unreachable. The header is
+  rewritten after finalising with the range that was written.
+
+- **`version` in tileset metadata is a valid SemVer string.** It was `"1"`.
+  The PMTiles v3 spec requires this key to be valid
+  [SemVer 2.0.0](https://semver.org/spec/v2.0.0.html) where it appears, and
+  these archives are read by clients that hold the spec to it. Changed for
+  MBTiles output too, so that converting one with `mb-util` does not produce a
+  PMTiles that breaks the spec.
 
 ## 0.7.0
 

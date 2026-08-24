@@ -90,6 +90,10 @@ class MBTilesDatabase:
         # self.conn.execute('pragma journal_mode=DELETE')
         self.conn.close()
 
+    def commit(self):
+        """Commit the current transaction."""
+        self.conn.commit()
+
     def add_metadata(self, metadata: dict):
         """Adds metadata to the mbtiles db"""
         for key, value in metadata.items():
@@ -136,8 +140,20 @@ class MBTilesDatabase:
         )
         
     
-    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain"):
-        """Adds bounds and center metadata, along with format, name, description and version."""
+    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain", description: Optional[str] = None, attribution: Optional[str] = None, sparse: Optional[bool] = None):
+        """Adds bounds and center metadata, along with format, name, description and version.
+
+        `description` defaults to the time of the run. `attribution` is left
+        out of the table entirely when it is not given, rather than written
+        empty: a consumer showing an empty credit line is worse than one
+        showing none.
+
+        `sparse` says whether tiles that hold nothing but upscaled data were
+        skipped, which decides whether a server should answer a missing tile
+        with 404 (let the client overzoom) or 204 (an empty tile). None leaves
+        the key out, for a writer that has no such option to report -- saying
+        `false` would claim a decision that was never made.
+        """
         
         if bounds is None:
            
@@ -154,18 +170,29 @@ class MBTilesDatabase:
         center_zoom = int((min_zoom + max_zoom) / 2)
         center_str = f'{center_lon},{center_lat},{center_zoom}'
 
-        self.add_metadata({
+        metadata = {
             "format": format,
             "name": name,
-            "description": f"Created {datetime.datetime.now()}",
-            "version": "1",
+            "description": description or f"Created {datetime.datetime.now()}",
+            # SemVer, because the PMTiles v3 spec requires it of this key and
+            # these tables get converted into PMTiles metadata -- by our own
+            # writer, and by mb-util.
+            "version": "1.0.0",
             "type": "baselayer",
             "minzoom": min_zoom,
             "maxzoom": max_zoom,
             "encoding": encoding,
             "bounds": bounds_str,
             "center": center_str
-        })
+        }
+        if attribution:
+            metadata["attribution"] = attribution
+        if sparse is not None:
+            # This column is `text`, so the value can only be a string.
+            # Lowercase, so that a reader can JSON-parse it and get the
+            # boolean the PMTiles metadata carries directly.
+            metadata["sparse"] = "true" if sparse else "false"
+        self.add_metadata(metadata)
 
     @contextmanager
     def db_connection(self):
