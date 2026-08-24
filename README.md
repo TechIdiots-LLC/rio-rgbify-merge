@@ -74,6 +74,12 @@ Options:
                                   (.mbtiles output only)
   --min-z INTEGER                 Minimum zoom to tile (.mbtiles output only)
   --format [png|webp]             Output tile format (.mbtiles output only)
+  --name TEXT                     Tileset name, written to the output's
+                                  metadata [DEFAULT: Terrain]
+  --description TEXT              Tileset description [DEFAULT: the time of
+                                  the run]
+  --attribution TEXT              Credit line for the tileset. Omitted from the
+                                  metadata when unset
   --archive-format [mbtiles|pmtiles]
                                   Output container, as opposed to --format,
                                   which is the image inside it [DEFAULT: from
@@ -103,6 +109,18 @@ rio rgbify -e terrarium --min-z 0 --max-z 8 -j 24 --format png SRC_PATH.vrt DST_
 
 ```
 rio rgbify -e mapbox -b -10000 -i 0.1 --min-z 0 --max-z 8 -j 24 --format png SRC_PATH.vrt DST_PATH.pmtiles
+```
+
+### Naming a tileset
+
+`--name`, `--description` and `--attribution` are written into the output's
+metadata. Set them for a PMTiles output in particular: an archive keeps its
+metadata between the root directory and the leaf directories, so saying
+something different afterwards changes its length, moves every offset that
+follows, and means writing the whole file again.
+
+```
+rio rgbify -e mapbox --min-z 0 --max-z 12 --format png   --name "Ocean Floor"   --description "GEBCO bathymetry under JAXA land"   --attribution "© GEBCO 2026, © JAXA"   SRC_PATH.vrt DST_PATH.pmtiles
 ```
 
 ### `merge` Command
@@ -148,6 +166,9 @@ The `merge` command makes use of a json configuration file which should be passe
         }
     ],
     "output_path": "/path/to/output.mbtiles",
+    "name": "Ocean Floor",
+    "description": "GEBCO bathymetry under JAXA land",
+    "attribution": "© GEBCO 2026, © JAXA",
     "output_encoding": "mapbox",
     "output_nodata": -9999,
     "output_format": "webp",
@@ -217,6 +238,9 @@ The `merge` command makes use of a json configuration file which should be passe
         *   `mask_values` (Optional, Default `[0.0]`): A list of numbers representing the elevation values to mask.
         *   `mask_range` (Optional, Default `[]`): A `[low, high]` band of heights meaning "no data here", or a list of such bands. Both ends are included. Nodata is rarely one number by the time it reaches a merge: a source resampled on its way to being built does not hold what it was authored with, so a sea authored as `0` arrives spread over `-0.9 m` to `0` — and `mask_values` on the two ends of that leaves everything between standing proud of whatever is underneath, which a hillshade picks out as a scatter of bright pixels. Compared to the thousandth, so a band includes the number written on it.
 *   `output_path` (Optional, Default: `"output.mbtiles"`, or `"output.pmtiles"` under `output_type: "pmtiles"`): The output path for the merged archive.
+*   `name` (Optional, Default: `"Merged Terrain"`, or `"Merged Raster"` under `output_type: "raster"`): The tileset's name, written to the output's metadata.
+*   `description` (Optional, Default: the time of the run): The tileset's description, written to the output's metadata.
+*   `attribution` (Optional): A credit line for the tileset. Left out of the metadata entirely when unset, rather than written empty — a consumer renders an empty credit line. Set this for a PMTiles output in particular: an archive keeps its metadata between the root directory and the leaf directories, so saying something different afterwards changes its length, moves every offset that follows, and means writing the whole file again.
 *   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"`, `"terrarium"` or `"custom"`).
 *   `output_redFactor`, `output_greenFactor`, `output_blueFactor`, `output_baseShift` (Required with `output_encoding: "custom"`): The formula to write the merged tiles with. Sources may use different encodings from each other and from the output — everything is decoded to metres before it is merged, so the encodings only have to be readable, not to match.
 

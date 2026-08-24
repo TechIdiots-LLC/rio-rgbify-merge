@@ -752,6 +752,178 @@ class TestRGBTilerPMTilesOutput:
 
 
 # ---------------------------------------------------------------------------
+# Tileset identity: name, description, attribution
+#
+# These have to be right when the archive is written. A PMTiles keeps its
+# metadata between the root directory and the leaf directories, so saying
+# something different later changes its length, moves every offset after it,
+# and means writing the whole file again.
+# ---------------------------------------------------------------------------
+
+class TestTilesetMetadata:
+
+    def test_writer_records_all_three(self, tmp_path):
+        out = tmp_path / "out.pmtiles"
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(
+                list(WORLD), 0, 0, "mapbox", "png",
+                "Ocean Floor", "Bathymetry merged with land", "© GEBCO 2026",
+            )
+            w.insert_tile_with_retry([0, 0, 0], _tile_bytes())
+
+        reader = PMTilesReader(out)
+        try:
+            meta = reader.metadata()
+        finally:
+            reader.close()
+        assert meta["name"] == "Ocean Floor"
+        assert meta["description"] == "Bathymetry merged with land"
+        assert meta["attribution"] == "© GEBCO 2026"
+
+    def test_attribution_is_omitted_rather_than_left_empty(self, tmp_path):
+        """An empty credit line is worse than none: a consumer renders it."""
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 1.0})
+        reader = PMTilesReader(out)
+        try:
+            assert "attribution" not in reader.metadata()
+        finally:
+            reader.close()
+
+    def test_description_defaults_to_the_time_of_the_run(self, tmp_path):
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 1.0})
+        reader = PMTilesReader(out)
+        try:
+            assert reader.metadata()["description"].startswith("Created ")
+        finally:
+            reader.close()
+
+    def test_both_containers_record_them_identically(self, tmp_path):
+        """The same three strings, whichever container they are written into."""
+        identity = ("Ocean Floor", "Bathymetry merged with land", "© GEBCO 2026")
+
+        mb = tmp_path / "out.mbtiles"
+        with MBTilesDatabase(str(mb)) as db:
+            db.add_bounds_center_metadata(list(WORLD), 0, 0, "mapbox", "png", *identity)
+            db.insert_tile_with_retry([0, 0, 0], _tile_bytes())
+        pm = tmp_path / "out.pmtiles"
+        with PMTilesWriter(pm) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 0, "mapbox", "png", *identity)
+            w.insert_tile_with_retry([0, 0, 0], _tile_bytes())
+
+        conn = sqlite3.connect(str(mb))
+        try:
+            mb_meta = dict(conn.execute("SELECT name, value FROM metadata"))
+        finally:
+            conn.close()
+        reader = PMTilesReader(pm)
+        try:
+            pm_meta = reader.metadata()
+        finally:
+            reader.close()
+
+        for key in ("name", "description", "attribution"):
+            assert mb_meta[key] == pm_meta[key] == dict(
+                zip(("name", "description", "attribution"), identity)
+            )[key]
+
+    def test_merger_passes_them_through(self, tmp_path):
+        src = tmp_path / "src.mbtiles"
+        _make_mbtiles(src, {(0, 0, 0): 100.0, (1, 0, 0): 200.0})
+        out = tmp_path / "merged.pmtiles"
+        TerrainRGBMerger(
+            [MBTilesSource(path=src, encoding=EncodingType.MAPBOX)],
+            output_path=out, output_encoding=EncodingType.MAPBOX,
+            output_image_format=ImageFormat.PNG,
+            min_zoom=0, max_zoom=1, processes=1, bounds=WORLD,
+            name="Blended Terrain", description="GEBCO under JAXA",
+            attribution="© GEBCO, © JAXA",
+        ).process_all(min_zoom=0)
+
+        reader = PMTilesReader(out)
+        try:
+            meta = reader.metadata()
+        finally:
+            reader.close()
+        assert meta["name"] == "Blended Terrain"
+        assert meta["description"] == "GEBCO under JAXA"
+        assert meta["attribution"] == "© GEBCO, © JAXA"
+
+    def test_merger_defaults_the_name(self, tmp_path):
+        src = tmp_path / "src.mbtiles"
+        _make_mbtiles(src, {(0, 0, 0): 100.0})
+        out = tmp_path / "merged.pmtiles"
+        TerrainRGBMerger(
+            [MBTilesSource(path=src, encoding=EncodingType.MAPBOX)],
+            output_path=out, output_encoding=EncodingType.MAPBOX,
+            output_image_format=ImageFormat.PNG,
+            min_zoom=0, max_zoom=0, processes=1, bounds=WORLD,
+        ).process_all(min_zoom=0)
+        reader = PMTilesReader(out)
+        try:
+            assert reader.metadata()["name"] == "Merged Terrain"
+        finally:
+            reader.close()
+
+    def test_a_described_archive_still_conforms(self, tmp_path):
+        """spec 5 wants these three to be strings where they appear."""
+        out = tmp_path / "out.pmtiles"
+        with PMTilesWriter(out) as w:
+            w.add_bounds_center_metadata(
+                list(WORLD), 0, 0, "mapbox", "png",
+                "Ocean Floor", "Bathymetry", '<a href="https://gebco.net">GEBCO</a>',
+            )
+            w.insert_tile_with_retry([0, 0, 0], _tile_bytes())
+        info = validate_spec(out)
+        assert info["metadata"]["attribution"] == '<a href="https://gebco.net">GEBCO</a>'
+
+    def test_merge_cli_reads_them_from_the_config(self, tmp_path):
+        src = tmp_path / "src.mbtiles"
+        _make_mbtiles(src, {(0, 0, 0): 100.0, (1, 0, 0): 200.0})
+        out = tmp_path / "out.pmtiles"
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({
+            "output_type": "pmtiles",
+            "output_path": str(out),
+            "name": "Ocean Floor",
+            "description": "Bathymetry merged with land",
+            "attribution": "© GEBCO 2026",
+            "min_zoom": 0, "max_zoom": 1,
+            "sources": [{"path": str(src), "encoding": "mapbox"}],
+        }), encoding="utf-8")
+
+        result = CliRunner().invoke(cli, ["merge", "-c", str(cfg), "-j", "1"])
+        assert result.exit_code == 0, result.output
+        reader = PMTilesReader(out)
+        try:
+            meta = reader.metadata()
+        finally:
+            reader.close()
+        assert meta["name"] == "Ocean Floor"
+        assert meta["description"] == "Bathymetry merged with land"
+        assert meta["attribution"] == "© GEBCO 2026"
+
+    def test_rgbify_cli_reads_them_from_the_flags(self):
+        runner = CliRunner()
+        with runner.isolated_filesystem():
+            result = runner.invoke(rgbify, [
+                ELEV_SRC, "out.pmtiles", "--min-z", 10, "--max-z", 10, "-j", 1,
+                "--name", "Whitney", "--description", "USGS 1/3 arc-second",
+                "--attribution", "© USGS",
+            ])
+            assert result.exit_code == 0, result.output
+            reader = PMTilesReader("out.pmtiles")
+            try:
+                meta = reader.metadata()
+            finally:
+                reader.close()
+            assert meta["name"] == "Whitney"
+            assert meta["description"] == "USGS 1/3 arc-second"
+            assert meta["attribution"] == "© USGS"
+
+
+# ---------------------------------------------------------------------------
 # Conformance to spec/v3/spec.md
 #
 # Checked by parsing the raw bytes rather than by reading the archive back
@@ -941,6 +1113,42 @@ class TestMbutilInterop:
         finally:
             a.close()
             b.close()
+
+    def test_round_trip_through_mbutil_preserves_the_identity(self, tmp_path):
+        """name, description and attribution survive pmtiles -> mbtiles -> pmtiles.
+
+        The three that have to be right at write time are also the three most
+        likely to be dropped by a converter, since none of them is needed to
+        read a tile.
+        """
+        root = _mbutil_or_skip()
+        identity = ("Ocean Floor", "Bathymetry merged with land", "(c) GEBCO 2026, (c) JAXA")
+
+        ours = tmp_path / "ours.pmtiles"
+        with PMTilesWriter(ours) as w:
+            w.add_bounds_center_metadata(list(WORLD), 0, 1, "terrarium", "png", *identity)
+            for z, x, tms_y in ((0, 0, 0), (1, 0, 0), (1, 1, 1)):
+                w.insert_tile_with_retry([x, tms_y, z], _tile_bytes(10.0 * z + x, "terrarium"))
+
+        mid = tmp_path / "mid.mbtiles"
+        _run_mbutil(root, ours, mid)
+        conn = sqlite3.connect(str(mid))
+        try:
+            mid_meta = dict(conn.execute("SELECT name, value FROM metadata"))
+        finally:
+            conn.close()
+
+        back = tmp_path / "back.pmtiles"
+        _run_mbutil(root, mid, back)
+        reader = PMTilesReader(back)
+        try:
+            back_meta = reader.metadata()
+        finally:
+            reader.close()
+
+        for key, expected in zip(("name", "description", "attribution"), identity):
+            assert mid_meta[key] == expected, f"{key} lost converting to mbtiles"
+            assert back_meta[key] == expected, f"{key} lost converting back"
 
     def test_round_trip_through_mbutil_preserves_the_tiles(self, tmp_path):
         """pmtiles -> mbtiles -> pmtiles comes back with the same tiles."""

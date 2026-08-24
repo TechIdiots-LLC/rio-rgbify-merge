@@ -241,8 +241,15 @@ class PMTilesWriter:
 
     def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int,
                                    max_zoom: int, encoding: str, format: str,
-                                   name: str = "Terrain"):
-        """Build the header, and the metadata that mirrors MBTilesDatabase's."""
+                                   name: str = "Terrain", description: Optional[str] = None,
+                                   attribution: Optional[str] = None):
+        """Build the header, and the metadata that mirrors MBTilesDatabase's.
+
+        Worth getting right at the first attempt for a PMTiles: the metadata
+        sits between the root directory and the leaf directories, so changing
+        its length moves every offset after it and the archive has to be
+        written again to say something different here.
+        """
         w, s, e, n = bounds if bounds is not None else (-180.0, -90.0, 180.0, 90.0)
         center_lon, center_lat = (w + e) / 2, (n + s) / 2
         center_zoom = int((min_zoom + max_zoom) / 2)
@@ -263,10 +270,10 @@ class PMTilesWriter:
             "center_lat_e7": int(center_lat * 10_000_000),
         }
 
-        self.add_metadata({
+        metadata = {
             "format": format,
             "name": name,
-            "description": f"Created {datetime.datetime.now()}",
+            "description": description or f"Created {datetime.datetime.now()}",
             # Spec v3 section 5: if `version` is present it MUST be a valid
             # SemVer 2.0.0 string, and "1" is not one.
             "version": "1.0.0",
@@ -277,7 +284,10 @@ class PMTilesWriter:
             "encoding": encoding,
             "bounds": f"{w},{s},{e},{n}",
             "center": f"{center_lon},{center_lat},{center_zoom}",
-        })
+        }
+        if attribution:
+            metadata["attribution"] = attribution
+        self.add_metadata(metadata)
 
     def insert_tile_with_retry(self, tile: List[int], contents: bytes,
                                use_inverse_y: bool = False):

@@ -147,7 +147,8 @@ class TerrainRGBMerger:
                  output_image_format=ImageFormat.PNG,
                  min_zoom=0, max_zoom=None, bounds=None, gaussian_blur_sigma=0.2,
                  bounds_source=None, output_encoding_factors=None,
-                 archive_format=None):
+                 archive_format=None, name="Merged Terrain", description=None,
+                 attribution=None):
         self.sources = sources
         self.output_path = Path(output_path)
         self.output_encoding = output_encoding
@@ -166,6 +167,12 @@ class TerrainRGBMerger:
         self.bounds_source = bounds_source
         # Only meaningful when output_encoding is CUSTOM.
         self.output_encoding_factors = output_encoding_factors
+        # Written into the tileset's metadata. Worth setting for a PMTiles
+        # output: its metadata cannot be edited afterwards without rewriting
+        # the archive, because changing its length moves everything after it.
+        self.name = name
+        self.description = description
+        self.attribution = attribution
         # The container, as opposed to `output_image_format`, which is the
         # image inside it. None means take it from the extension.
         self.archive_format = (
@@ -205,6 +212,12 @@ class TerrainRGBMerger:
         archive_format: Optional[str]
             The output container, "mbtiles" or "pmtiles". None takes it from
             the output path extension.
+        name: str
+            The tileset's name, written to its metadata.
+        description: Optional[str]
+            The tileset's description. None records the time of the run.
+        attribution: Optional[str]
+            A credit line for the tileset. Left out of the metadata when None.
         """
     
     def _decode_tile(self, tile_data: bytes, tile: mercantile.Tile, encoding: EncodingType, source: MBTilesSource, source_index: int) -> Tuple[Optional[np.ndarray], dict]:
@@ -710,12 +723,12 @@ class TerrainRGBMerger:
             # One archive, held open across every zoom, written by this
             # process alone -- see process_zoom_level.
             with PMTilesWriter(self.output_path) as writer:
-                writer.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, "Merged Terrain")
+                writer.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution)
                 for zoom in range(min_zoom, max_zoom + 1):
                     self.process_zoom_level(zoom, verbose, writer=writer)
         else:
             with MBTilesDatabase(self.output_path) as db:
-                 db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, "Merged Terrain")
+                 db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution)
 
 
             for zoom in range(min_zoom, max_zoom + 1):

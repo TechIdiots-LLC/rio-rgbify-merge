@@ -140,8 +140,14 @@ class MBTilesDatabase:
         )
         
     
-    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain"):
-        """Adds bounds and center metadata, along with format, name, description and version."""
+    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain", description: Optional[str] = None, attribution: Optional[str] = None):
+        """Adds bounds and center metadata, along with format, name, description and version.
+
+        `description` defaults to the time of the run. `attribution` is left
+        out of the table entirely when it is not given, rather than written
+        empty: a consumer showing an empty credit line is worse than one
+        showing none.
+        """
         
         if bounds is None:
            
@@ -158,10 +164,10 @@ class MBTilesDatabase:
         center_zoom = int((min_zoom + max_zoom) / 2)
         center_str = f'{center_lon},{center_lat},{center_zoom}'
 
-        self.add_metadata({
+        metadata = {
             "format": format,
             "name": name,
-            "description": f"Created {datetime.datetime.now()}",
+            "description": description or f"Created {datetime.datetime.now()}",
             # SemVer, because the PMTiles v3 spec requires it of this key and
             # these tables get converted into PMTiles metadata -- by our own
             # writer, and by mb-util.
@@ -172,7 +178,10 @@ class MBTilesDatabase:
             "encoding": encoding,
             "bounds": bounds_str,
             "center": center_str
-        })
+        }
+        if attribution:
+            metadata["attribution"] = attribution
+        self.add_metadata(metadata)
 
     @contextmanager
     def db_connection(self):

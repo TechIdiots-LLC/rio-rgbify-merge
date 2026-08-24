@@ -55,6 +55,36 @@
   would pass that. Every shape this package can produce goes through it, since
   the ones that break a MUST are the unusual ones.
 
+- **`name`, `description` and `attribution` can be set on the output.**
+  `--name`, `--description` and `--attribution` for `rgbify`; the same three
+  keys at the top level of a `merge` config. They were not settable at all
+  before: every tileset came out called "Terrain" or "Merged Terrain", with a
+  description that was the timestamp of the run and no credit line anywhere.
+
+  ```
+  rio rgbify --name "Ocean Floor" --attribution "© GEBCO 2026" dem.vrt out.pmtiles
+  ```
+
+  ```json
+  {
+      "name": "Ocean Floor",
+      "description": "GEBCO bathymetry under JAXA land",
+      "attribution": "© GEBCO 2026, © JAXA"
+  }
+  ```
+
+  Worth setting at the point the tileset is built rather than afterwards. A
+  PMTiles archive keeps its metadata between the root directory and the leaf
+  directories, so saying something different later changes its length, moves
+  every offset that follows it, and means writing the whole file again — which
+  for a planet-scale terrain archive is not a correction anyone makes twice.
+
+  `attribution` is left out of the metadata when it is not given, rather than
+  written empty: a consumer that renders a credit line renders an empty one.
+  `description` still falls back to the time of the run. Both containers and
+  all three commands — `rgbify`, `merge`, and raster output — record them the
+  same way, and all three survive a round trip through `mb-util`.
+
 ### 🐞 Bug fixes
 
 - **The zoom range in the PMTiles header now describes the tiles that are

@@ -142,6 +142,9 @@ class RGBTiler:
         resampling=Resampling.nearest,
         bounding_tile=None,
         archive_format=None,
+        name="Terrain",
+        description=None,
+        attribution=None,
     ):
         self.inpath = inpath
         self.outpath = outpath
@@ -154,6 +157,12 @@ class RGBTiler:
         self.base_val = base_val
         self.round_digits = round_digits
         self.resampling = resampling
+        # Written into the tileset's metadata. Worth setting for a PMTiles
+        # output: its metadata cannot be edited afterwards without rewriting
+        # the archive, because changing its length moves everything after it.
+        self.name = name
+        self.description = description
+        self.attribution = attribution
         # The container, as opposed to `format`, which is the image inside it.
         # None means take it from the extension, which is what the CLI passes
         # unless someone names a container that disagrees with the filename.
@@ -291,7 +300,7 @@ class RGBTiler:
         )
 
         with self.db:
-            self.db.add_bounds_center_metadata(bounds, self.min_z, self.max_z, self.encoding, self.format, "Terrain")
+            self.db.add_bounds_center_metadata(bounds, self.min_z, self.max_z, self.encoding, self.format, self.name, self.description, self.attribution)
 
             with ctx.Pool(processes, initializer=self._init_worker) as pool:
                 try:
