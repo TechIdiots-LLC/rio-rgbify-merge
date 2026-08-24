@@ -723,12 +723,12 @@ class TerrainRGBMerger:
             # One archive, held open across every zoom, written by this
             # process alone -- see process_zoom_level.
             with PMTilesWriter(self.output_path) as writer:
-                writer.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution)
+                writer.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
                 for zoom in range(min_zoom, max_zoom + 1):
                     self.process_zoom_level(zoom, verbose, writer=writer)
         else:
             with MBTilesDatabase(self.output_path) as db:
-                 db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution)
+                 db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
 
 
             for zoom in range(min_zoom, max_zoom + 1):

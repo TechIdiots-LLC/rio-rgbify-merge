@@ -396,7 +396,7 @@ class RasterRGBMerger:
         self.logger.info(f"Processing zoom levels {min_zoom} to {max_zoom}")
 
         with MBTilesDatabase(self.output_path) as db:
-            db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution)
+            db.add_bounds_center_metadata(self.bounds, self.min_zoom, max_zoom, self.output_encoding.value, self.output_image_format.value, self.name, self.description, self.attribution, self.sparse_tiles)
 
         for zoom in range(min_zoom, max_zoom + 1):
             self.process_zoom_level(zoom, verbose)

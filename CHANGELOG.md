@@ -85,6 +85,24 @@
   all three commands — `rgbify`, `merge`, and raster output — record them the
   same way, and all three survive a round trip through `mb-util`.
 
+- **`sparse` is recorded in the output's metadata**, alongside the `encoding`
+  that was already there. Between them they are what a server needs to serve a
+  terrain tileset it was handed: `encoding` to decode a height, and `sparse` to
+  know whether a missing tile means "overzoom from a lower one" (404) or
+  "there is genuinely nothing here" (204). tileserver-gl merges an archive's
+  metadata straight into its TileJSON, so the archive answers both questions
+  itself instead of needing them repeated in the server config.
+
+  Written by the merges, which are what have a `sparse_tiles` option. `rgbify`
+  writes no `sparse` key at all rather than writing `false`, which would claim
+  a decision it never made.
+
+  In a PMTiles archive it is a JSON boolean. Not the string `"false"`, which is
+  a non-empty string: a consumer writing `metadata.sparse ?? default` takes it
+  as given and then tests it for truth, turning a dense archive into one served
+  as sparse. An MBTiles `metadata` table can only hold text, so there it is
+  `"true"` or `"false"` — lowercase, so the same JSON parse reads both.
+
 ### 🐞 Bug fixes
 
 - **The zoom range in the PMTiles header now describes the tiles that are

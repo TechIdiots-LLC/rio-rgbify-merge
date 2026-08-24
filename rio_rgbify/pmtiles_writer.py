@@ -236,13 +236,19 @@ class PMTilesWriter:
         Values are stringified, which is what a reader gets back from an
         MBTiles metadata table -- the column is declared `text` -- so the same
         tileset described either way describes itself the same.
+
+        Booleans are the exception and stay booleans. JSON has the type, and a
+        consumer that tests one for truth reads the string "false" as true.
         """
-        self._metadata.update({k: str(v) for k, v in metadata.items()})
+        self._metadata.update({
+            k: v if isinstance(v, bool) else str(v) for k, v in metadata.items()
+        })
 
     def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int,
                                    max_zoom: int, encoding: str, format: str,
                                    name: str = "Terrain", description: Optional[str] = None,
-                                   attribution: Optional[str] = None):
+                                   attribution: Optional[str] = None,
+                                   sparse: Optional[bool] = None):
         """Build the header, and the metadata that mirrors MBTilesDatabase's.
 
         Worth getting right at the first attempt for a PMTiles: the metadata
@@ -287,6 +293,13 @@ class PMTilesWriter:
         }
         if attribution:
             metadata["attribution"] = attribution
+        if sparse is not None:
+            # A real JSON boolean rather than the string the MBTiles column is
+            # limited to. This one is read by JavaScript, and "false" is a
+            # non-empty string: a consumer writing `metadata.sparse ?? default`
+            # would take the string and read it as true, which is the opposite
+            # of what the archive says.
+            metadata["sparse"] = sparse
         self.add_metadata(metadata)
 
     def insert_tile_with_retry(self, tile: List[int], contents: bytes,

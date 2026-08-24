@@ -241,7 +241,7 @@ The `merge` command makes use of a json configuration file which should be passe
 *   `name` (Optional, Default: `"Merged Terrain"`, or `"Merged Raster"` under `output_type: "raster"`): The tileset's name, written to the output's metadata.
 *   `description` (Optional, Default: the time of the run): The tileset's description, written to the output's metadata.
 *   `attribution` (Optional): A credit line for the tileset. Left out of the metadata entirely when unset, rather than written empty — a consumer renders an empty credit line. Set this for a PMTiles output in particular: an archive keeps its metadata between the root directory and the leaf directories, so saying something different afterwards changes its length, moves every offset that follows, and means writing the whole file again.
-*   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"`, `"terrarium"` or `"custom"`).
+*   `output_encoding` (Optional, Default: `"mapbox"`): The output encoding to use (`"mapbox"`, `"terrarium"` or `"custom"`). Recorded in the output's metadata as `encoding`: it is the one thing about a terrain tileset that cannot be read off the pixels, and a server needs it to decode a height.
 *   `output_redFactor`, `output_greenFactor`, `output_blueFactor`, `output_baseShift` (Required with `output_encoding: "custom"`): The formula to write the merged tiles with. Sources may use different encodings from each other and from the output — everything is decoded to metres before it is merged, so the encodings only have to be readable, not to match.
 
     **Note the sign.** `baseShift` is *subtracted*, where `base_val` is added: a mapbox source's `base_val` of `-10000` is a `baseShift` of `10000`. The two named encodings are exactly these numbers — mapbox is `(6553.6, 25.6, 0.1, 10000)` and terrarium is `(256, 1, 0.00390625, 32768)` — so `"custom"` with those values behaves identically to naming them.
@@ -249,6 +249,10 @@ The `merge` command makes use of a json configuration file which should be passe
 *   `output_format` (Optional, Default: `"png"`): The output image format (`"png"` or `"webp"`).
 *   `resampling` (Optional, Default: `"bilinear"`): The method to use for resampling (`"nearest"`, `"bilinear"`, `"cubic"`, `"cubic_spline"`, `"lanczos"`, `"average"`, `"mode"`, or `"gauss"`).
 *   `sparse_tiles` (Optional, Default: false): A boolean that determines whether to skip writing tiles that only contain upscaled data. If true, tiles consisting entirely of upscaled data will not be written to the output MBTiles file.
+
+    The value is recorded in the output's metadata as `sparse`, which tells a server whether a missing tile means "overzoom from a lower one" (404) or "there is genuinely nothing here" (204). tileserver-gl merges an archive's metadata straight into its TileJSON, so the archive answers the question itself rather than needing it repeated in the server config. In a PMTiles archive it is a JSON boolean; an MBTiles `metadata` table can only hold text, so there it is the string `"true"` or `"false"`.
+
+    `rgbify` writes no `sparse` key, because it has no such option — every tile it is asked for is one it writes.
 *   `min_zoom` (Optional, Default: `0`): The minimum zoom level to process.
 *   `max_zoom` (Optional, Default: uses max from last file): The maximum zoom level to process.
 *  `bounds` (Optional, Default: bounds of last file): A bounding box to limit the tiles being generated. Should be in the format: `[w,s,e,n]`. **Overrides `bounds_source` if set**.

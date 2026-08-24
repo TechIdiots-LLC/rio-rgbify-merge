@@ -263,7 +263,8 @@ class TestPMTilesWriter:
         """What an MBTiles metadata table hands back, its column being `text`.
 
         A tileset described one way in an MBTiles and another in a PMTiles is
-        a difference consumers have to special-case.
+        a difference consumers have to special-case. Booleans are the one
+        exception -- see test_sparse_is_a_real_boolean.
         """
         out = tmp_path / "out.pmtiles"
         _make_pmtiles(out, {(0, 0, 0): 10.0, (1, 0, 0): 20.0})
@@ -921,6 +922,122 @@ class TestTilesetMetadata:
             assert meta["name"] == "Whitney"
             assert meta["description"] == "USGS 1/3 arc-second"
             assert meta["attribution"] == "© USGS"
+
+
+# ---------------------------------------------------------------------------
+# encoding and sparse
+#
+# The two keys that describe how to *use* the tiles rather than what is in
+# them. tileserver-gl merges an archive's metadata straight into its TileJSON,
+# so what is written here is what a server sees.
+# ---------------------------------------------------------------------------
+
+class TestEncodingAndSparseMetadata:
+
+    def _merge(self, tmp_path, out, sparse_tiles, encoding=EncodingType.MAPBOX):
+        src = tmp_path / "src.mbtiles"
+        if not src.exists():
+            _make_mbtiles(src, {(0, 0, 0): 100.0, (1, 0, 0): 200.0, (1, 1, 1): 300.0})
+        TerrainRGBMerger(
+            [MBTilesSource(path=src, encoding=EncodingType.MAPBOX)],
+            output_path=out, output_encoding=encoding,
+            output_image_format=ImageFormat.PNG,
+            min_zoom=0, max_zoom=1, processes=1, bounds=WORLD,
+            sparse_tiles=sparse_tiles,
+        ).process_all(min_zoom=0)
+
+    @pytest.mark.parametrize("encoding", [EncodingType.MAPBOX, EncodingType.TERRARIUM])
+    def test_encoding_records_the_output_encoding(self, tmp_path, encoding):
+        """Not the sources' encoding -- what the written tiles are in."""
+        out = tmp_path / f"{encoding.value}.pmtiles"
+        self._merge(tmp_path, out, sparse_tiles=False, encoding=encoding)
+        reader = PMTilesReader(out)
+        try:
+            assert reader.metadata()["encoding"] == encoding.value
+        finally:
+            reader.close()
+
+    @pytest.mark.parametrize("sparse_tiles", [True, False])
+    def test_sparse_records_the_merger_setting(self, tmp_path, sparse_tiles):
+        out = tmp_path / "merged.pmtiles"
+        self._merge(tmp_path, out, sparse_tiles=sparse_tiles)
+        reader = PMTilesReader(out)
+        try:
+            assert reader.metadata()["sparse"] is sparse_tiles
+        finally:
+            reader.close()
+
+    def test_sparse_is_a_real_boolean(self, tmp_path):
+        """Not the string "false", which JavaScript reads as true.
+
+        A consumer writing `metadata.sparse ?? fallback` takes a non-empty
+        string as given and then tests it for truth, so a stringified `false`
+        turns a dense archive into one served as sparse -- the opposite of
+        what it says.
+        """
+        out = tmp_path / "dense.pmtiles"
+        self._merge(tmp_path, out, sparse_tiles=False)
+        reader = PMTilesReader(out)
+        try:
+            value = reader.metadata()["sparse"]
+        finally:
+            reader.close()
+        assert value is False
+        assert not isinstance(value, str)
+
+    def test_the_tiler_writes_no_sparse_key(self, tmp_path):
+        """It has no such option, and `false` would claim a decision it never made."""
+        out = tmp_path / "out.pmtiles"
+        _make_pmtiles(out, {(0, 0, 0): 10.0})
+        reader = PMTilesReader(out)
+        try:
+            meta = reader.metadata()
+        finally:
+            reader.close()
+        assert "sparse" not in meta
+        # The encoding still has to be there: it cannot be read off the pixels.
+        assert meta["encoding"] == "mapbox"
+
+    @pytest.mark.parametrize("sparse_tiles,expected", [(True, "true"), (False, "false")])
+    def test_mbtiles_records_sparse_as_parseable_text(self, tmp_path, sparse_tiles, expected):
+        """A `text` column cannot hold a boolean, so it holds one JSON can read."""
+        out = tmp_path / "merged.mbtiles"
+        self._merge(tmp_path, out, sparse_tiles=sparse_tiles)
+        conn = sqlite3.connect(str(out))
+        try:
+            meta = dict(conn.execute("SELECT name, value FROM metadata"))
+        finally:
+            conn.close()
+        assert meta["sparse"] == expected
+        assert json.loads(meta["sparse"]) is sparse_tiles
+
+    def test_a_sparse_archive_still_conforms(self, tmp_path):
+        out = tmp_path / "merged.pmtiles"
+        self._merge(tmp_path, out, sparse_tiles=True)
+        assert validate_spec(out)["metadata"]["sparse"] is True
+
+    def test_merge_cli_carries_sparse_tiles_into_the_metadata(self, tmp_path):
+        src = tmp_path / "src.mbtiles"
+        _make_mbtiles(src, {(0, 0, 0): 100.0, (1, 0, 0): 200.0})
+        out = tmp_path / "out.pmtiles"
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({
+            "output_type": "pmtiles",
+            "output_path": str(out),
+            "output_encoding": "terrarium",
+            "sparse_tiles": True,
+            "min_zoom": 0, "max_zoom": 1,
+            "sources": [{"path": str(src), "encoding": "mapbox"}],
+        }))
+        result = CliRunner().invoke(cli, ["merge", "-c", str(cfg), "-j", "1"])
+        assert result.exit_code == 0, result.output
+        reader = PMTilesReader(out)
+        try:
+            meta = reader.metadata()
+        finally:
+            reader.close()
+        assert meta["sparse"] is True
+        assert meta["encoding"] == "terrarium"
 
 
 # ---------------------------------------------------------------------------

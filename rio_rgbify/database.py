@@ -140,13 +140,19 @@ class MBTilesDatabase:
         )
         
     
-    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain", description: Optional[str] = None, attribution: Optional[str] = None):
+    def add_bounds_center_metadata(self, bounds: Optional[List[float]], min_zoom: int, max_zoom: int, encoding: str, format: str, name: str = "Terrain", description: Optional[str] = None, attribution: Optional[str] = None, sparse: Optional[bool] = None):
         """Adds bounds and center metadata, along with format, name, description and version.
 
         `description` defaults to the time of the run. `attribution` is left
         out of the table entirely when it is not given, rather than written
         empty: a consumer showing an empty credit line is worse than one
         showing none.
+
+        `sparse` says whether tiles that hold nothing but upscaled data were
+        skipped, which decides whether a server should answer a missing tile
+        with 404 (let the client overzoom) or 204 (an empty tile). None leaves
+        the key out, for a writer that has no such option to report -- saying
+        `false` would claim a decision that was never made.
         """
         
         if bounds is None:
@@ -181,6 +187,11 @@ class MBTilesDatabase:
         }
         if attribution:
             metadata["attribution"] = attribution
+        if sparse is not None:
+            # This column is `text`, so the value can only be a string.
+            # Lowercase, so that a reader can JSON-parse it and get the
+            # boolean the PMTiles metadata carries directly.
+            metadata["sparse"] = "true" if sparse else "false"
         self.add_metadata(metadata)
 
     @contextmanager
